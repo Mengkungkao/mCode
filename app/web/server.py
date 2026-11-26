@@ -40,6 +40,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import List, Optional, Tuple
 
 from ..core import storage
+from ..core.net import local_addresses
 from ..projects import boards, files as pfiles, gitutil
 from ..projects.model import ProjectError
 from ..toolchains import detect
@@ -60,24 +61,6 @@ class ApiError(Exception):
         super().__init__(message)
         self.status = status
         self.fix = fix
-
-
-def local_addresses() -> List[str]:
-    out = []
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            sock.connect(("192.0.2.1", 9))         # TEST-NET: nothing is sent
-            out.append(sock.getsockname()[0])
-    except OSError:
-        pass
-    try:
-        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-            address = info[4][0]
-            if address not in out and not address.startswith("127."):
-                out.append(address)
-    except OSError:
-        pass
-    return out
 
 
 class WebServer:

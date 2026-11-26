@@ -138,6 +138,7 @@ class AIService:
         self._auth: dict = {"logged_in": False, "label": "Not checked", "checked": 0.0}
         self._checking = False
         self.login_session: Optional[LoginSession] = None
+        self.code_drop = None               # the sign-in code page (web/codedrop.py)
         self.turn: Optional[Turn] = None
         self._projects: Dict[str, ProjectAI] = {}
         self._bridge_started = False
@@ -157,6 +158,7 @@ class AIService:
             self.studio.jobs.cancel(turn.job_id)
         if self.login_session is not None and self.login_session.state in ("starting", "waiting"):
             self.login_session.cancel()
+        self._close_code_drop()
         if self._bridge_started:
             self.bridge.stop()
 
@@ -196,7 +198,7 @@ class AIService:
                 "source": tool.source, "problem": tool.problem if not tool.found else "",
                 "hint": tool.hint if not tool.found else "", "auth": auth, "mode": mode,
                 "mode_label": AI_MODES.get(mode, mode), "memory_warning": warning,
-                "login": self.login_session.to_dict() if self.login_session else None,
+                "login": self._login_dict(),
                 "turn": turn.to_dict() if turn else None}
 
     def refresh_status(self, wait: bool = False) -> dict:
@@ -229,6 +231,12 @@ class AIService:
             return self.login_session.to_dict()
 
         def changed(session: LoginSession) -> None:
+            if session is not self.login_session and self.login_session is not None:
+                return                          # an older sign-in finishing
+            if session.state == "waiting":
+                self._open_code_drop()
+            else:
+                self._close_code_drop()
             if session.state == "done":
                 self.log.add("login", ok=True)
                 self.refresh_status(wait=True)
@@ -253,9 +261,45 @@ class AIService:
         return self.login_session.to_dict()
 
     def login_cancel(self) -> None:
+        self._close_code_drop()
         if self.login_session is not None:
             self.login_session.cancel()
             self._publish("login")
+
+    def _login_dict(self) -> Optional[dict]:
+        if self.login_session is None:
+            return None
+        data = self.login_session.to_dict()
+        drop = self.code_drop
+        data["code_url"] = drop.url() if drop is not None and self.login_session.state == \
+            "waiting" else ""
+        return data
+
+    # The sign-in code page: lets a phone on the same network paste Claude's
+    # login code while (and only while) the sign-in waits for it.
+    def _open_code_drop(self) -> None:
+        from ..web.codedrop import CodeDrop
+        with self._lock:
+            if self.code_drop is not None or not self.studio.settings.get("ai.login_code_page"):
+                return
+            drop = CodeDrop(self._code_from_phone)
+            if not drop.start():
+                return
+            self.code_drop = drop
+
+    def _close_code_drop(self) -> None:
+        with self._lock:
+            drop, self.code_drop = self.code_drop, None
+        if drop is not None:
+            drop.stop()
+
+    def _code_from_phone(self, code: str) -> Optional[str]:
+        try:
+            self.login_code(code)
+        except AIError as exc:
+            return str(exc)
+        self.log.add("login-code", source="phone")
+        return None
 
     def logout(self) -> bool:
         try:

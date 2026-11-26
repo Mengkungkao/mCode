@@ -9,7 +9,8 @@ login, boards, audio and permissions. mCode's log under mFruit OS is
 | Problem | What to do |
 |---|---|
 | **AI: "Claude Code is not installed"** | Settings › Development tools › Claude Code › Install, or `curl -fsSL https://claude.ai/install.sh \| bash`. If it is installed somewhere unusual, set Settings › Claude Code program. |
-| **AI: "Not signed in" / login expired** | Connect again (QR code on the LCD, or the Claude pill in the IDE). On the device without a browser, type the code the sign-in page shows on a USB keyboard, or paste it in the desktop IDE. |
+| **AI: "Not signed in" / login expired** | Connect again (LCD: AI Engineer or Settings › Claude Code › *Connect Claude account*; IDE: the Claude pill). On the LCD, step 1's QR code opens Claude's sign-in; copy the code it shows, tap, and scan step 2's QR code to paste it from the same phone. |
+| **Sign-in step 2 page does not open on the phone** | The phone must be on the same Wi-Fi as the device (not mobile data). The link works once and only while the device shows step 1/2; *try again* makes a new one. Or type the code on a USB keyboard. |
 | **AI: "usage limit"** | Your Claude plan's limit for now; try later. The project is as it was (Ask mode) or can be undone. |
 | **AI: "cannot be reached"** | Check Wi-Fi; Claude Code needs the internet. |
 | **AI: "ran out of memory"** | The board is too small for Claude Code (Pi Zero 2 W). Use the desktop IDE from a bigger computer, or a Pi 4/5. |

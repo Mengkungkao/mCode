@@ -98,6 +98,25 @@ contract copies, JS syntax, links, generated configuration doc).
 - Not verified: flashing the C5, Identify chip on the C5 (no esptool on the
   board yet), the LCD screens on the real display.
 
+## Session 2026-11-27 (0.1.2, sign-in from a phone)
+
+- Problem (owner): on the device, Claude's long sign-in code had to be typed
+  on a USB keyboard; "paste it in the desktop IDE" did not say where.
+- 0.1.2: the LCD sign-in has two QR codes (tap switches): 1 = Claude's
+  sign-in page, 2 = a one-time page on the device (`app/web/codedrop.py`,
+  owned by `AIService` login) where the phone pastes the code. Only while the
+  sign-in waits; one code; never logged; setting `ai.login_code_page`.
+  [Security](docs/SECURITY.md#the-sign-in-code-page).
+- Checked on the .130 with the real Claude Code 2.1.332 (throw-away
+  CLAUDE_CONFIG_DIR, owner's login untouched): the page opened from another
+  computer on the LAN, the pasted (fake) code reached `claude auth login`,
+  Claude refused it, the page closed. A real sign-in with the owner's phone
+  is NOT verified.
+- Fruit Store: a native `mcode` entry pinned to v0.1.1 (asset SHA-256
+  checked, preflight passed) is in mFruit OS `config/catalog.json`,
+  uncommitted; after it is pushed, `catalog-sync` follows v0.1.2.
+- Not committed. Owner: commit + push → release v0.1.2.
+
 ## Copied to the .130 board (2026-11-27, first session)
 
 `orangepi@192.168.0.130` (Orange Pi Zero 2W, 981 MB, mFruit OS 1.6.2, Python

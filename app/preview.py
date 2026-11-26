@@ -202,6 +202,7 @@ def scenes(studio, ui) -> List[Tuple[str, Callable[[], None]]]:
         ai.turn = None
         ai.project_ai(project.id).review = None
         ai.login_session = None
+        ai.code_drop = None
 
     def push(screen):
         ui.stack.append(screen)
@@ -281,6 +282,16 @@ def scenes(studio, ui) -> List[Tuple[str, Callable[[], None]]]:
         ai.login_session = session
         push(s.LoginScreen(ui))
     add("14-claude-login-qr", login)
+
+    def login_code():
+        login()
+
+        class Drop:                     # the sign-in code page's address (web/codedrop.py)
+            def url(self):
+                return "http://192.168.0.130:41234/c/Qm9hcmRzQW5kQ29kZXNYeQ"
+        ai.code_drop = Drop()
+        ui.stack[-1].step = 2
+    add("14b-claude-login-code", login_code)
 
     def signed_in():
         reset()

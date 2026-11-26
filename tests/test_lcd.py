@@ -234,3 +234,36 @@ class NoBoardTests(LcdCase):
         self.hold()
         self.assertEqual(self.top(), "ReaderScreen")
         self.assertIn("musb-hdrc.5.auto", self.ui.top().text)
+
+
+class LoginStepsTests(LcdCase):
+    def setUp(self):
+        super().setUp()
+        from app.ai.claude import LoginSession
+        session = LoginSession(["true"], {})
+        session.state = "waiting"
+        session.url = "https://claude.ai/oauth/authorize?fake"
+        self.studio.ai.login_session = session
+        self.addCleanup(setattr, self.studio.ai, "login_session", None)
+        self.ui.push(s.LoginScreen(self.ui))
+
+    def test_tap_switches_between_the_two_qr_codes(self):
+        screen = self.ui.top()
+        self.assertEqual(screen.get_title(), "1 · Sign in")
+        self.assertIn(("tap", "step 2"), screen.hints(False))
+        self.tap()
+        self.assertEqual(screen.get_title(), "2 · Send code")
+        self.ui.render()                                  # no network page: typing help
+        self.tap()
+        self.assertEqual(screen.get_title(), "1 · Sign in")
+
+    def test_typed_code_is_sent_with_a_hold(self):
+        sent = []
+        self.studio.ai.login_code = lambda code: sent.append(code)
+        screen = self.ui.top()
+        for char in "ab#c":                               # the key hub sends characters on key-down
+            self.ui.input.key_event(KeyEvent("char", char, DOWN, ord(char)))
+        self.assertEqual(screen.step, 2)                  # typing shows step 2
+        self.assertIn(("hold", "send code"), screen.hints(False))
+        self.hold()
+        self.assertEqual(sent, ["ab#c"])

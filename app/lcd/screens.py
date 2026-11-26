@@ -901,6 +901,12 @@ class ClaudeSetupScreen(ListScreen):
 
 
 class LoginScreen(Screen):
+    """Claude sign-in in two steps, each a QR code for the phone:
+
+    1. Claude's sign-in page (``claude auth login``'s link);
+    2. mCode's sign-in code page on this device (web/codedrop.py), where the
+       phone pastes the code Claude shows. A USB keyboard can type it instead.
+    """
     title = "Sign in"
     animated = True
 
@@ -908,6 +914,16 @@ class LoginScreen(Screen):
         super().__init__(ui)
         self.code = ""
         self.error = ""
+        self.step = 1
+
+    def get_title(self):
+        if self.state() == "waiting":
+            return "1 · Sign in" if self.step == 1 else "2 · Send code"
+        return self.title
+
+    def _code_url(self) -> str:
+        login = self.studio.ai.status().get("login") or {}
+        return login.get("code_url", "")
 
     def enter(self):
         session = self.studio.ai.login_session
@@ -932,10 +948,15 @@ class LoginScreen(Screen):
     def controls(self):
         state = self.state()
         if state == "waiting":
-            return [Control(SELECT, "send code", lambda a: self._submit(), gesture="Enter"),
-                    Control(BACK, "cancel", lambda a: self._cancel()),
-                    Control(CHAR, "", lambda a: self._type(a.char)),
-                    Control(ERASE, "", lambda a: self._erase())]
+            other = "step 2" if self.step == 1 else "step 1"
+            controls = [Control(NEXT, other, lambda a: self._other_step())]
+            if self.code:
+                controls.append(Control(SELECT, "send code", lambda a: self._submit()))
+            else:
+                controls.append(Control(SELECT, "", lambda a: self._other_step()))
+            return controls + [Control(BACK, "cancel", lambda a: self._cancel()),
+                               Control(CHAR, "", lambda a: self._type(a.char)),
+                               Control(ERASE, "", lambda a: self._erase())]
         if state == "done":
             return [Control(SELECT, "done", lambda a: self._finish()),
                     Control(BACK, "done", lambda a: self._finish())]
@@ -944,7 +965,11 @@ class LoginScreen(Screen):
                     Control(BACK, "back", lambda a: self._cancel())]
         return [Control(BACK, "cancel", lambda a: self._cancel())]
 
+    def _other_step(self):
+        self.step = 2 if self.step == 1 else 1
+
     def _type(self, char):
+        self.step = 2
         if len(self.code) < 1000:
             self.code += char
 
@@ -965,6 +990,7 @@ class LoginScreen(Screen):
     def _retry(self):
         self.error = ""
         self.code = ""
+        self.step = 1
         self.studio.ai.login_session = None
         self.enter()
 
@@ -987,16 +1013,15 @@ class LoginScreen(Screen):
         if state == "starting":
             draw.spinner_title(c, "Starting sign-in…", "Opening Claude Code's login",
                                self.ui.phase)
-        elif state == "waiting" and session is not None:
-            size = draw.qr_code(c, session.url, SCREEN_W // 2, CONTENT_TOP + 2, 150)
-            y = CONTENT_TOP + size + 6
-            c.text(SCREEN_W // 2, y, "Scan, sign in, then type the code", 12, "semibold", t.text,
+        elif state == "waiting" and session is not None and self.step == 1:
+            size = draw.qr_code(c, session.url, SCREEN_W // 2, CONTENT_TOP + 2, 168)
+            y = CONTENT_TOP + size + 8
+            c.text(SCREEN_W // 2, y, "Scan with your phone, sign in", 14, "semibold", t.text,
                    anchor="ma")
-            if self.code:
-                text_field(c, self.code[-40:], y + 18, height=28)
-            else:
-                c.text(SCREEN_W // 2, y + 18, "or paste it in the desktop IDE", 12, "regular",
-                       t.text_muted, anchor="ma")
+            c.text(SCREEN_W // 2, y + 20, "copy the code, then tap: step 2", 13, "regular",
+                   t.text_muted, anchor="ma")
+        elif state == "waiting" and session is not None:
+            self._render_send(c)
         elif state == "checking":
             draw.spinner_title(c, "Checking…", "Finishing the sign-in", self.ui.phase)
         elif state == "done":
@@ -1004,6 +1029,34 @@ class LoginScreen(Screen):
         else:
             error = self.error or (session.error if session else "") or "Sign-in did not finish."
             draw.big_status(c, "cross", "Not signed in", error, body_lines=4)
+
+    def _render_send(self, c):
+        t = c.theme
+        url = self._code_url()
+        if self.code:
+            draw.wrapped(c, "Typed code (hold to send):", MARGIN, CONTENT_TOP + 8,
+                         SCREEN_W - 2 * MARGIN, 13, "semibold", t.text_muted, max_lines=1)
+            text_field(c, self.code[-40:], CONTENT_TOP + 30, height=28)
+            return
+        if not url:
+            draw.big_status(c, "warning", "Type the code", LOGIN_TYPE_HELP +
+                            " Or paste it in the desktop IDE (Claude sign-in).", body_lines=4)
+            return
+        size = draw.qr_code(c, url, SCREEN_W // 2, CONTENT_TOP + 2, 168)
+        y = CONTENT_TOP + size + 8
+        c.text(SCREEN_W // 2, y, "Scan, paste the code, Send", 14, "semibold", t.text,
+               anchor="ma")
+        c.text(SCREEN_W // 2, y + 20, f"Same Wi-Fi · {_short_address(url)}", 12, "regular",
+               t.text_muted, anchor="ma")
+
+
+LOGIN_TYPE_HELP = "Type the code on a USB keyboard, then press Enter."
+
+
+def _short_address(url: str) -> str:
+    """"http://192.168.0.130:41234/c/token" -> "192.168.0.130:41234" (never the token)."""
+    rest = url.split("://", 1)[-1]
+    return rest.split("/", 1)[0]
 
 
 # ================================================================== projects

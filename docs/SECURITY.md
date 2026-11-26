@@ -18,6 +18,23 @@ boards. These are the rules it enforces and where.
 Claude's login is Claude Code's own (`~/.claude`); mCode never reads it. mCode
 keeps only "signed in", the method and the plan.
 
+## The sign-in code page
+
+While (and only while) the Claude sign-in started on the device waits for its
+code, mCode serves one page on the local network so a phone can paste the
+code (`app/web/codedrop.py`; [Claude Code](CLAUDE_CODE.md#signing-in)):
+
+* one path, `/c/<token>`, with a random 128-bit token shown only in the LCD's
+  QR code; anything else is "not found"; 30 wrong requests close it;
+* it takes one code (at most 4 KB, one line), hands it to the waiting
+  `claude auth login` and then refuses more; it closes when the sign-in stops
+  waiting (done, failed, cancelled) and after 15 minutes at most;
+* the code is never logged or stored. It is a one-time OAuth code that is
+  useless without the PKCE verifier only the waiting `claude auth login`
+  holds, so plain HTTP on the local network does not expose the account;
+* it does not open the desktop IDE to the network; switch it off with
+  `ai.login_code_page` ([Configuration](CONFIGURATION.md)).
+
 ## Flashing
 
 See [Hardware › Flashing safety](HARDWARE.md#flashing-safety): two-step

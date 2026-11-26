@@ -27,9 +27,19 @@ better. Builds and flashing do not need Claude.
 
 mCode drives the official login, `claude auth login`:
 
-* **LCD**: *Connect Claude account* shows a QR code with Claude's sign-in
-  link. Open it on your phone, sign in to your Claude account, then type the
-  code the page shows on a USB keyboard (or paste it in the desktop IDE).
+* **LCD** (*AI Engineer* while signed out, or *Settings › Claude Code* ›
+  *Connect Claude account*): two steps, each a QR code for your phone (tap
+  switches between them):
+  1. **Sign in**: Claude's sign-in page. Sign in to your Claude account; the
+     page then shows an *Authentication Code*: copy it.
+  2. **Send code**: a page on the device itself
+     (`http://<device>:<port>/c/<one-time link>`). Paste the code and tap
+     *Send to mCode*; the device finishes signing in by itself. The phone
+     must be on the same Wi-Fi as the device.
+
+  Without a network, or with *Paste the sign-in code from a phone* switched
+  off, step 2 asks you to type the code on a USB keyboard (Enter sends it)
+  or paste it in the desktop IDE.
 * **Desktop IDE**: the Claude pill › *Sign in with Claude* › open the link,
   sign in, paste the code.
 * **Terminal**: `./run.sh cli claude login`.

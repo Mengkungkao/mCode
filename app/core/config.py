@@ -113,6 +113,11 @@ FIELDS: List[Field] = [
           maximum=14400),
     Field("ai.allow_web", "bool", False, "Let Claude search the web (Advanced mode)",
           "Datasheets and library documentation; read-only."),
+    Field("ai.login_code_page", "bool", True, "Paste the sign-in code from a phone",
+          "While signing in to Claude waits for its code, mCode serves one page on the local "
+          "network (second QR code) where a phone can paste it: one-time link, one code, "
+          "closed when the sign-in stops waiting. Off: type the code on a keyboard or paste it "
+          "in the desktop IDE.", lcd=True),
     # ---------------------------------------------------------- development
     Field("dev.projects_dir", "path", "~/mcode-projects", "Project folder",
           "Where new projects are created. Projects are never deleted with the app."),

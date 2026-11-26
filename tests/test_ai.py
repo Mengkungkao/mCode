@@ -206,6 +206,45 @@ class FailureAndAuthTests(AITestCase):
             time.sleep(0.02)
         self.assertEqual(studio.ai.login_session.state, "done", session)
 
+    def test_login_code_from_a_phone_through_the_code_page(self):
+        import urllib.parse
+        import urllib.request
+        studio, _project = self.make("ask")
+        studio.ai.login_start()
+        deadline = time.time() + 5
+        while studio.ai.code_drop is None and time.time() < deadline:
+            time.sleep(0.02)                            # opened by the "waiting" change event
+        drop = studio.ai.code_drop
+        self.assertIsNotNone(drop)
+        code_url = studio.ai.status()["login"]["code_url"]
+        if code_url:                                   # empty when this machine has no network
+            self.assertTrue(code_url.endswith(f":{drop.port}/c/{drop.token}"), code_url)
+        url = f"http://127.0.0.1:{drop.port}/c/{drop.token}"
+        data = urllib.parse.urlencode({"code": "GOOD"}).encode()
+        with urllib.request.urlopen(urllib.request.Request(url, data=data), timeout=5) as resp:
+            self.assertEqual(resp.status, 200)
+        deadline = time.time() + 5
+        while studio.ai.login_session.state not in ("done", "failed") and time.time() < deadline:
+            time.sleep(0.02)
+        self.assertEqual(studio.ai.login_session.state, "done")
+        self.assertIsNone(studio.ai.code_drop)          # closed once the sign-in stopped waiting
+        self.assertEqual(studio.ai.status()["login"]["code_url"], "")
+
+    def test_code_page_closes_on_cancel_and_can_be_switched_off(self):
+        studio, _project = self.make("ask")
+        studio.ai.login_start()
+        deadline = time.time() + 5
+        while studio.ai.code_drop is None and time.time() < deadline:
+            time.sleep(0.02)
+        drop = studio.ai.code_drop
+        self.assertTrue(drop is not None and drop.running)
+        studio.ai.login_cancel()
+        self.assertIsNone(studio.ai.code_drop)
+        self.assertFalse(drop.running)
+        studio.settings.set("ai.login_code_page", False, save=False)
+        studio.ai._open_code_drop()                     # what the "waiting" event calls
+        self.assertIsNone(studio.ai.code_drop)
+
     def test_login_wrong_code_fails_without_leaking_the_link_query(self):
         studio, _project = self.make("ask")
         studio.ai.login_start()

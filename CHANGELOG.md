@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.2] — 2026-11-27
+
+- Claude sign-in on the device in two steps, each a QR code for the phone:
+  1. Claude's sign-in page; 2. a one-time page on the device where the phone
+  pastes the code Claude shows (no more typing it). Tap switches between the
+  steps; a USB keyboard can still type the code. The page exists only while
+  the sign-in waits for the code, takes one code and never logs it
+  (`ai.login_code_page`, on by default; [Security](docs/SECURITY.md#the-sign-in-code-page)).
+
 ## [0.1.1] — 2026-11-27
 
 - ESP32-C5 boards: new projects with the Arduino CLI (`esp32:esp32:esp32c5`,

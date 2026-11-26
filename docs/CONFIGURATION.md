@@ -31,6 +31,7 @@ project, chosen board per project, identified chips), `.env` (optional
 | `ai.voice_autosend` | `false` | `true`, `false` | yes | Send voice requests at once. Off: mCode shows what it heard and waits for you to send it. |
 | `ai.turn_timeout_s` | `1200` | 60–14400 |  | AI task time limit (seconds) |
 | `ai.allow_web` | `false` | `true`, `false` |  | Let Claude search the web (Advanced mode). Datasheets and library documentation; read-only. |
+| `ai.login_code_page` | `true` | `true`, `false` | yes | Paste the sign-in code from a phone. While signing in to Claude waits for its code, mCode serves one page on the local network (second QR code) where a phone can paste it: one-time link, one code, closed when the sign-in stops waiting. Off: type the code on a keyboard or paste it in the desktop IDE. |
 
 ## Development
 

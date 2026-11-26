@@ -62,7 +62,7 @@ bash tools/check.sh           # everything CI runs
 
 ## Status
 
-Version 0.1.1. What has been verified, and how, is in [CONTINUE.md](CONTINUE.md)
+Version 0.1.2. What has been verified, and how, is in [CONTINUE.md](CONTINUE.md)
 and the dated records in [docs/records/](docs/records/). Flashing a physical
 board and the Whisplay HAT itself have **not** been verified yet.
 
