@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Fix: reinstalling or updating failed at "backup" after the app had been
+  stopped uncleanly. The AI tool bridge kept its Unix socket in the data
+  folder, which mFruit OS copies before every install and `shutil.copytree`
+  cannot copy a socket. Sockets now live in `XDG_RUNTIME_DIR` (or
+  `/tmp/mcode-<uid>`); a stale socket left in `data/run` by 0.1.0 is removed
+  at start. Regression tests: `RuntimeFilesTests`.
+
 ## [0.1.0] — 2026-11-27
 
 First version.

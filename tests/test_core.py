@@ -225,3 +225,39 @@ class JobTests(TempCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RuntimeFilesTests(TempCase):
+    """mFruit OS copies the data folder before every install and update with
+    shutil.copytree, which cannot copy a Unix socket. A socket left in the data
+    folder by an unclean exit made every reinstall fail at "backup"."""
+
+    def test_sockets_live_outside_the_data_folder(self):
+        from app.paths import Paths
+        paths = Paths(os.path.join(self.tmp, "data"), environ={"XDG_RUNTIME_DIR": self.tmp}).ensure()
+        self.assertFalse(os.path.abspath(paths.run).startswith(paths.data + os.sep))
+
+    def test_started_bridge_does_not_break_the_data_snapshot(self):
+        import shutil
+        studio = self.studio()
+        studio.ai.bridge.start()
+        self.addCleanup(studio.ai.bridge.stop)
+        self.assertTrue(os.path.exists(studio.ai.bridge.socket_path))
+        # What mfruitos.updater.rollback.snapshot_data does:
+        shutil.copytree(studio.paths.data, os.path.join(self.tmp, "snapshot"), symlinks=True)
+
+    def test_stale_socket_from_0_1_0_is_removed_but_other_files_are_kept(self):
+        import socket
+        from app.paths import Paths
+        paths = Paths(os.path.join(self.tmp, "data"))
+        os.makedirs(paths.legacy_run)
+        stale = os.path.join(paths.legacy_run, "s")
+        sock = socket.socket(socket.AF_UNIX)
+        sock.bind(stale)
+        sock.close()
+        keep = os.path.join(paths.legacy_run, "note.txt")
+        with open(keep, "w") as handle:
+            handle.write("keep")
+        paths.ensure()
+        self.assertFalse(os.path.exists(stale))
+        self.assertTrue(os.path.exists(keep))

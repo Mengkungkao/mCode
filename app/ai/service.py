@@ -622,20 +622,18 @@ class AIService:
 
 
 def socket_path(folder: str, name: str) -> str:
-    """A Unix socket path that fits the 108-byte limit: the data folder's run/ when
-    short enough, else a private folder under XDG_RUNTIME_DIR or /tmp."""
+    """A Unix socket path that fits the 108-byte limit: ``folder`` (Paths.run, which
+    is outside the data folder) when short enough, else a private folder under /tmp."""
     path = os.path.join(folder, name)
     if len(path.encode()) < 100:
         return path
     import hashlib
     digest = hashlib.sha256(folder.encode()).hexdigest()[:12]
-    base = os.environ.get("XDG_RUNTIME_DIR") or ""
-    if not base or not os.path.isdir(base):
-        base = f"/tmp/mcode-{os.getuid()}"
-        os.makedirs(base, mode=0o700, exist_ok=True)
-        if os.stat(base).st_uid != os.getuid():
-            raise OSError(f"{base} belongs to another user")
-        os.chmod(base, 0o700)
+    base = f"/tmp/mcode-{os.getuid()}"
+    os.makedirs(base, mode=0o700, exist_ok=True)
+    if os.stat(base).st_uid != os.getuid():
+        raise OSError(f"{base} belongs to another user")
+    os.chmod(base, 0o700)
     return os.path.join(base, f"mcode-{digest}-{name}")
 
 

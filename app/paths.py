@@ -5,7 +5,7 @@
 * Data: ``WHISPLAY_OS_APP_DATA`` (snapshotted by mFruit OS before each
   update), or ``~/.local/share/mcode`` when run on its own. Settings, the
   desktop access token, logs, AI workspaces, backups, the voice cache and
-  tools installed by mCode live here.
+  tools installed by mCode live here. Sockets do not (see ``Paths.run``).
 * Projects: ``~/mcode-projects`` by default (Settings > Development >
   Project folder). Deliberately *outside* the data folder: projects are the
   user's work, they can be large (build folders), and removing or updating
@@ -14,13 +14,18 @@
 
 from __future__ import annotations
 
+import hashlib
+import logging
 import os
+import stat
 from typing import Mapping, Optional
 
 from . import APP_ID
 
 CODE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_PROJECTS_DIR = "~/mcode-projects"
+
+log = logging.getLogger("mcode.paths")
 
 
 def default_data_dir(environ: Optional[Mapping[str, str]] = None) -> str:
@@ -40,6 +45,20 @@ def under_mfruit_os(environ: Optional[Mapping[str, str]] = None) -> bool:
 
 def expand(path: str) -> str:
     return os.path.abspath(os.path.expanduser(os.path.expandvars(path))) if path else ""
+
+
+def runtime_base(environ: Optional[Mapping[str, str]] = None) -> str:
+    """A private per-user folder for sockets: XDG_RUNTIME_DIR, else /tmp/mcode-<uid>."""
+    env = os.environ if environ is None else environ
+    base = env.get("XDG_RUNTIME_DIR") or ""
+    if base and os.path.isdir(base):
+        return base
+    base = f"/tmp/mcode-{os.getuid()}"
+    os.makedirs(base, mode=0o700, exist_ok=True)
+    if os.stat(base).st_uid != os.getuid():
+        raise OSError(f"{base} belongs to another user")
+    os.chmod(base, 0o700)
+    return base
 
 
 class Paths:
@@ -117,8 +136,42 @@ class Paths:
 
     @property
     def run(self) -> str:
-        """Sockets and other per-run files (owner-only)."""
+        """Sockets and other per-run files (owner-only).
+
+        Deliberately *outside* the data folder: mFruit OS copies the data folder
+        before every install and update, and ``shutil.copytree`` cannot copy a
+        Unix socket. A socket left behind by an unclean exit therefore made every
+        reinstall fail at "backup" (2026-11-27, .130 board).
+        """
+        digest = hashlib.sha256(self.data.encode()).hexdigest()[:12]
+        return os.path.join(runtime_base(), f"mcode-{digest}")
+
+    @property
+    def legacy_run(self) -> str:
+        """Where 0.1.0 kept its sockets (inside the data folder)."""
         return self._p("run")
+
+    def remove_legacy_run(self) -> None:
+        """Delete sockets 0.1.0 left in ``data/run`` and the folder when empty.
+
+        Only sockets and an empty folder are removed, never other files.
+        """
+        folder = self.legacy_run
+        try:
+            names = os.listdir(folder)
+        except OSError:
+            return
+        for name in names:
+            path = os.path.join(folder, name)
+            try:
+                if stat.S_ISSOCK(os.lstat(path).st_mode):
+                    os.unlink(path)
+            except OSError as exc:
+                log.warning("could not remove stale socket %s: %s", path, exc)
+        try:
+            os.rmdir(folder)
+        except OSError:
+            pass
 
     def ensure(self) -> "Paths":
         os.makedirs(self.data, mode=0o700, exist_ok=True)
@@ -127,6 +180,8 @@ class Paths:
         except OSError:
             pass
         for folder in (self.logs, self.job_logs, self.serial_logs, self.backups, self.workspaces,
-                       self.trash, self.voice_cache, self.tools_bin, self.run):
+                       self.trash, self.voice_cache, self.tools_bin):
             os.makedirs(folder, mode=0o700, exist_ok=True)
+        self.remove_legacy_run()
+        os.makedirs(self.run, mode=0o700, exist_ok=True)
         return self
