@@ -1,0 +1,17 @@
+{
+  "id": "mcode",
+  "name": "mCode Studio",
+  "version": "0.1.0",
+  "description": "AI embedded development: talk to Claude, build and flash ESP32 and Arduino boards",
+  "entrypoint": "run.sh",
+  "icon": "assets/icon.png",
+  "min_os_version": "1.4.0",
+  "repository": "https://github.com/Mengkungkao/mCode",
+  "exit_gesture": "none",
+  "disable_esc_exit_key": true,
+  "priority": 44,
+  "test": "test.sh",
+  "persist": [],
+  "env": {},
+  "background": false
+}
