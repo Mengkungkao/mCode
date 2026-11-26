@@ -1528,13 +1528,6 @@ MISSING_HELP = ("The code includes {} but no installed library provides it.\n\n"
 class BoardsScreen(ListScreen):
     title = "Boards"
 
-    def enter(self):
-        if self.studio.devices is not None:
-            self.studio.devices.refresh()
-
-    def on_event(self, topic, data):
-        return topic == "devices"
-
     def items(self):
         ui = self.ui
         devices = self.studio.devices.list() if self.studio.devices else []
@@ -1552,19 +1545,46 @@ class BoardsScreen(ListScreen):
                             mark="success" if chosen is not None and chosen.port == device.port
                             else None))
         out.append(Item("Refresh", self.enter, select="refresh"))
+        if not devices and self.studio.devices is not None:
+            out.append(Item("What to check", self._why, kind="nav"))
         out.append(Item("Back", ui.pop, kind="back"))
         return out
+
+    def _help(self):
+        if self.studio.devices is None:
+            return "Connect a board by USB", ""
+        if self._cached_help is None:
+            self._cached_help = self.studio.devices.no_board_help()
+        return self._cached_help
+
+    _cached_help = None
+
+    def enter(self):
+        self._cached_help = None
+        if self.studio.devices is not None:
+            self.studio.devices.refresh()
+
+    def on_event(self, topic, data):
+        if topic == "devices":
+            self._cached_help = None
+            return True
+        return False
+
+    def _why(self):
+        short, detail = self._help()
+        self.ui.push(ReaderScreen(self.ui, "What to check", detail or short))
 
     def render(self, c):
         devices = self.studio.devices.list() if self.studio.devices else []
         if not devices:
             t = c.theme
-            draw.icon(c, "plug", SCREEN_W // 2, CONTENT_TOP + 30, 40, t.text_faint)
-            c.text(SCREEN_W // 2, CONTENT_TOP + 60, "No board found", 19, "bold", t.text,
+            short, _detail = self._help()
+            draw.icon(c, "plug", SCREEN_W // 2, CONTENT_TOP + 22, 36, t.text_faint)
+            c.text(SCREEN_W // 2, CONTENT_TOP + 48, "No board found", 19, "bold", t.text,
                    anchor="ma")
-            c.text(SCREEN_W // 2, CONTENT_TOP + 86, "Connect a board by USB", 14, "regular",
+            c.text(SCREEN_W // 2, CONTENT_TOP + 74, short, 14, "regular",
                    t.text_muted, anchor="ma")
-            draw_list(c, [i.row() for i in self.items()], self.index, top=CONTENT_TOP + 120)
+            draw_list(c, [i.row() for i in self.items()], self.index, top=CONTENT_TOP + 102)
             return
         super().render(c)
 

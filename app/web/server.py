@@ -602,9 +602,14 @@ def route(method: str, path: str, q: dict, handler):
             return studio.uploads.start(plan.token, confirmed=True).to_dict()
         current = studio.projects.current()
         chosen = devices.selected(current)
-        return {"devices": [d.to_dict() for d in devices.list()], "hotplug": devices.hotplug,
-                "selected": chosen.port if chosen else "",
-                "history": studio.uploads.history(20) if studio.uploads else []}
+        listed = devices.list()
+        out = {"devices": [d.to_dict() for d in listed], "hotplug": devices.hotplug,
+               "selected": chosen.port if chosen else "",
+               "history": studio.uploads.history(20) if studio.uploads else []}
+        if not listed:
+            short, detail = devices.no_board_help()
+            out["help"] = {"short": short, "detail": detail}
+        return out
     # ------------------------------------------------------------ upload
     if head == "upload":
         if parts[1:2] == ["prepare"]:

@@ -1,7 +1,14 @@
 # Changelog
 
-## Unreleased
+## [0.1.1] — 2026-11-27
 
+- ESP32-C5 boards: new projects with the Arduino CLI (`esp32:esp32:esp32c5`,
+  Espressif core 3.3 or newer) or ESP-IDF (`esp32c5`). PlatformIO's official
+  platform has no C5 board, so it is not offered.
+- "No board found" now says why: nothing on USB (cable, power, port), a USB
+  port that works only as a device (gadget/OTG, as on the Orange Pi Zero 2W's
+  power port), or a device without a serial port. LCD: *Connect Board › What
+  to check*; desktop IDE: Hardware; terminal: `cli devices`.
 - Fix: reinstalling or updating failed at "backup" after the app had been
   stopped uncleanly. The AI tool bridge kept its Unix socket in the data
   folder, which mFruit OS copies before every install and `shutil.copytree`

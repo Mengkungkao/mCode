@@ -3,10 +3,11 @@
 Started 2026-11-27 at the owner's request: build **mCode Studio**, an AI
 embedded development studio, in `/home/meng/mCode` as an mFruit OS app (id
 `mcode`), Whisplay-first (second brief: "Whisplay HAT First UI/UX Redesign"),
-with a desktop IDE for HDMI. mFruit OS itself is not changed. Nothing is
-committed yet: the owner commits and pushes; commit bodies are dot points
-with **no co-author or agent lines**. No GitHub repository exists yet (the
-manifest names `github.com/Mengkungkao/mCode`).
+with a desktop IDE for HDMI. mFruit OS itself is not changed. The owner
+commits and pushes; commit bodies are dot points with **no co-author or agent
+lines**. Repository `github.com/Mengkungkao/mCode`; release v0.1.0 is
+published (tag at `3eaf245`). 0.1.1 is prepared in the working tree, not
+pushed (see "Session 2026-11-27 (later)").
 
 Read first: [docs/IMPLEMENTATION_REPORT.md](docs/IMPLEMENTATION_REPORT.md)
 (inspection, decisions, plan), then [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
@@ -44,7 +45,8 @@ Statuses: NOT IMPLEMENTED · IMPLEMENTED · SOFTWARE TESTED · HARDWARE VERIFIED
 | ESP32 compilation | IMPLEMENTED | SOFTWARE TESTED + real ESP32-S3 builds (Arduino CLI + Espressif core 3.3.12; PlatformIO espressif32) | N/A |
 | ESP-IDF projects | IMPLEMENTED | SOFTWARE TESTED (command generation only) | BLOCKED (ESP-IDF not installed here) |
 | Host unit tests | IMPLEMENTED | real `pio test -e native` 2/2 | N/A |
-| USB detection | IMPLEMENTED | SOFTWARE TESTED (simulated sysfs; netlink bind checked) | NOT VERIFIED (no board connected) |
+| USB detection | IMPLEMENTED | SOFTWARE TESTED (simulated sysfs; netlink bind checked; "no board" help from sysfs) | HARDWARE VERIFIED for an ESP32-C5 on its own USB (303a:1001, ttyACM0) on the .130 Orange Pi Zero 2W, through `cli devices` (LCD list not looked at) |
+| ESP32-C5 projects | IMPLEMENTED (0.1.1) | SOFTWARE TESTED + real Arduino CLI build (`esp32c5:CDCOnBoot=cdc`, core 3.3.12) | flashing NOT VERIFIED |
 | Arduino flashing | IMPLEMENTED | SOFTWARE TESTED (fake uploader; checks, tokens, monitor pause) | NOT VERIFIED |
 | ESP32 flashing | IMPLEMENTED | SOFTWARE TESTED (fake uploader) | NOT VERIFIED |
 | Chip detection / erase (esptool) | IMPLEMENTED | SOFTWARE TESTED (parsing, command names) | NOT VERIFIED |
@@ -73,7 +75,30 @@ contract copies, JS syntax, links, generated configuration doc).
 6. Fruit Store: add `mcode` to mFruit OS's `config/catalog.json` after the
    first release.
 
-## Copied to the .130 board (2026-11-27)
+## Session 2026-11-27 (later)
+
+- The commit `eadb164` had deleted the app (a Claude Code rewind removed the
+  files the first session wrote); the owner reverted it (`aba6357`).
+- .130 board: installed with `mfruitctl sideload`; it ran. After an unclean
+  restart (02:08, cause unknown; root fs has `commit=600`) 213 installed files
+  were empty and reinstall failed at "backup": a stale Unix socket in the
+  data folder broke mFruit OS's `copytree`. Fixed (`c6499fc`, sockets now in
+  XDG_RUNTIME_DIR); reinstalled and launched there. The owner then installed
+  Claude Code from mCode on that board (02:22, job succeeded).
+- ESP32-C5 "not found": the board's power/OTG USB-C port is gadget-only
+  (`dr_mode=peripheral`, `/sys/class/udc/musb-hdrc.5.auto`); on the other
+  port the C5 enumerated as 303a:1001 → ttyACM0 and mCode listed it. 0.1.1
+  adds the C5 to the catalogue and a "What to check" explanation for an empty
+  board list ([HARDWARE.md](docs/HARDWARE.md#when-no-board-is-found)).
+- Fruit Store (owner's request): needs the 0.1.1 release first. Owner: commit
+  and push (manifest 0.1.1 → release workflow publishes v0.1.1). Then add a
+  native `mcode` entry to mFruit OS `config/catalog.json` with the release
+  asset's `url`, `sha256`, `ref` and `version` (like `mdisplay`); after that
+  `catalog-sync` moves the pin by itself on each release.
+- Not verified: flashing the C5, Identify chip on the C5 (no esptool on the
+  board yet), the LCD screens on the real display.
+
+## Copied to the .130 board (2026-11-27, first session)
 
 `orangepi@192.168.0.130` (Orange Pi Zero 2W, 981 MB, mFruit OS 1.6.2, Python
 3.10.12, Pillow 9.0.1): the folder is in `~/mCode` (rsync, no `.git`). Not

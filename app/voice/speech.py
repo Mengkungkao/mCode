@@ -35,7 +35,7 @@ from typing import Optional
 
 log = logging.getLogger("mcode.speech")
 
-VOCABULARY = ("ESP32, ESP32-S3, ESP32-C3, ESP32-C6, ESP-IDF, Arduino, Arduino Uno, Arduino Mega, "
+VOCABULARY = ("ESP32, ESP32-S3, ESP32-C3, ESP32-C5, ESP32-C6, ESP-IDF, Arduino, Arduino Uno, Arduino Mega, "
               "Arduino Nano, PlatformIO, Raspberry Pi Pico, GPIO, I2C, SPI, UART, PWM, ADC, "
               "PCA9685, servo, stepper, MPU6050, BME280, DHT22, NeoPixel, WS2812, OLED, SSD1306, "
               "firmware, sketch, compile, build, flash, upload, serial monitor, baud rate, "

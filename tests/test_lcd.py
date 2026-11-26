@@ -216,3 +216,21 @@ class FooterTableTests(LcdCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NoBoardTests(LcdCase):
+    def test_empty_board_list_says_what_to_check(self):
+        empty = os.path.join(self.tmp, "nosys")
+        os.makedirs(os.path.join(empty, "class", "udc", "musb-hdrc.5.auto"))
+        self.studio.devices.sysfs = empty
+        self.studio.devices.scan()
+        self.ui.push(s.BoardsScreen(self.ui))
+        self.ui.top().enter()
+        self.assertEqual([i.label for i in self.ui.top().items()],
+                         ["Refresh", "What to check", "Back"])
+        image = self.ui.render()
+        self.assertEqual(image.size, (SCREEN_W, SCREEN_H))
+        self.next()                                       # to "What to check"
+        self.hold()
+        self.assertEqual(self.top(), "ReaderScreen")
+        self.assertIn("musb-hdrc.5.auto", self.ui.top().text)

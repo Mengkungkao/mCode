@@ -33,6 +33,15 @@ class CatalogueTests(unittest.TestCase):
         for board_id in ("esp32-c6", "esp32-h2"):
             self.assertEqual(boards.get(board_id).frameworks("platformio"), ["espidf"])
 
+    def test_esp32_c5_offers_only_what_its_tools_define(self):
+        board = boards.get("esp32-c5")
+        self.assertEqual(board.fqbn, "esp32:esp32:esp32c5")
+        self.assertEqual(board.idf_target, "esp32c5")
+        self.assertEqual(board.toolchains, ["arduino-cli", "esp-idf"])
+        self.assertIn("303a:1001", board.usb_ids)
+        self.assertIs(boards.find_by_idf_target("esp32c5"), board)
+        self.assertIs(boards.find_by_fqbn("esp32:esp32:esp32c5:CDCOnBoot=cdc"), board)
+
     def test_fqbns_match_installed_cores(self):
         """Every catalogue FQBN whose core is installed on this machine exists in it."""
         checks = boards.check_against_cores()

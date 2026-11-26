@@ -23,7 +23,7 @@ import socket
 import threading
 import time
 from dataclasses import asdict, dataclass, field
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 from ..projects import boards
 from . import usbids
@@ -339,6 +339,99 @@ class DeviceManager:
         self.scan()
         self.publish("devices", {"devices": [d.to_dict() for d in self.list()],
                                  "identified": device.port})
+
+
+    # ------------------------------------------------------- "no board" help
+    def usb_summary(self) -> "UsbSummary":
+        """What the kernel sees on USB, for explaining an empty board list."""
+        summary = UsbSummary(gadget_ports=_listdir(os.path.join(self.sysfs, "class", "udc")))
+        base = os.path.join(self.sysfs, "bus", "usb", "devices")
+        try:
+            names = sorted(os.listdir(base))
+        except OSError:
+            summary.readable = False
+            return summary
+        ttys = {os.path.realpath(os.path.join(self.sysfs, "class", "tty", t, "device"))
+                for t in _listdir(os.path.join(self.sysfs, "class", "tty"))}
+        for name in names:
+            if ":" in name:                       # an interface, not a device
+                continue
+            path = os.path.realpath(os.path.join(base, name))
+            if name.startswith("usb"):            # a host controller's root hub
+                summary.host_ports += 1
+                continue
+            if _read(os.path.join(path, "bDeviceClass")) == "09":
+                continue                          # an external hub
+            classes = set()
+            drivers = set()
+            for iface in glob.glob(os.path.join(path, f"{name}:*")):
+                classes.add(_read(os.path.join(iface, "bInterfaceClass")))
+                driver = os.path.join(iface, "driver")
+                if os.path.exists(driver):
+                    drivers.add(os.path.basename(os.path.realpath(driver)))
+            vid = _read(os.path.join(path, "idVendor")).lower()
+            pid = _read(os.path.join(path, "idProduct")).lower()
+            known = usbids.lookup(vid, pid)
+            # Only devices that could be a board: known IDs, CDC (02/0a) or
+            # vendor-specific (ff) interfaces. Keyboards, storage, audio and
+            # Bluetooth adapters are not boards and are not mentioned.
+            if known is None and not classes & {"02", "0a", "ff"}:
+                continue
+            serial = any(t == path or t.startswith(path + os.sep) for t in ttys)
+            summary.devices.append(UsbDevice(
+                name=(known.name if known else "") or _read(os.path.join(path, "product"))
+                or "USB device", usb_id=f"{vid}:{pid}", serial_port=serial,
+                drivers=sorted(d for d in drivers if d != "usb")))
+        return summary
+
+    def no_board_help(self) -> Tuple[str, str]:
+        """(one short line, a longer explanation) for an empty board list."""
+        summary = self.usb_summary()
+        silent = [d for d in summary.devices if not d.serial_port]
+        if silent:
+            device = silent[0]
+            driver = ", ".join(device.drivers) or "none"
+            return (f"{device.name[:28]}: no serial port",
+                    f"{device.name} ({device.usb_id}) is connected, but the system gave it no "
+                    f"serial port (driver: {driver}).\n\n"
+                    "A board in download mode (UF2 or DFU) looks like this: press its reset "
+                    "button or unplug and plug it in again. A USB-to-UART adapter whose driver "
+                    "is missing looks the same: check `dmesg` after plugging it in.")
+        lines = ["Nothing that could be a board is connected over USB.", "",
+                 "- Use a data cable: many USB cables only charge.",
+                 "- Check the board is powered: its power LED should be on."]
+        if summary.readable and summary.host_ports == 0:
+            lines.append("- This computer has no USB host port turned on, so it cannot see "
+                         "boards at all.")
+        if summary.gadget_ports:
+            ports = ", ".join(summary.gadget_ports)
+            lines.append(f"- This computer has a USB port that works only as a device "
+                         f"(gadget) port ({ports}). It is usually the power/OTG port: a board "
+                         "plugged in there is not seen. Use another USB port.")
+        return ("Nothing on USB", "\n".join(lines))
+
+
+@dataclass
+class UsbDevice:
+    name: str
+    usb_id: str
+    serial_port: bool
+    drivers: List[str] = field(default_factory=list)
+
+
+@dataclass
+class UsbSummary:
+    readable: bool = True                 # False when /sys/bus/usb could not be read
+    host_ports: int = 0                   # host controllers (root hubs)
+    devices: List[UsbDevice] = field(default_factory=list)
+    gadget_ports: List[str] = field(default_factory=list)   # USB ports in device mode
+
+
+def _listdir(path: str) -> List[str]:
+    try:
+        return sorted(os.listdir(path))
+    except OSError:
+        return []
 
 
 def _relevant(data: bytes) -> bool:

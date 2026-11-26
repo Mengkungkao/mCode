@@ -97,6 +97,79 @@ class DiscoveryTests(TempCase):
         self.assertEqual(usbids.chip_family("ESP32-D0WD-V3"), "esp32")
 
 
+class NoBoardHelpTests(TempCase):
+    """Why the board list is empty, worded from what the kernel shows in sysfs
+    (2026-11-27: an Orange Pi Zero 2W whose OTG port is a gadget-only port)."""
+
+    def sysfs(self):
+        root = os.path.join(self.tmp, "sys")
+        os.makedirs(os.path.join(root, "bus", "usb", "devices"))
+        os.makedirs(os.path.join(root, "class", "tty"))
+        return root
+
+    def hub(self, root, name="usb1"):
+        path = os.path.join(root, "devices", "platform", name)
+        os.makedirs(path)
+        with open(os.path.join(path, "bDeviceClass"), "w") as handle:
+            handle.write("09\n")
+        os.symlink(path, os.path.join(root, "bus", "usb", "devices", name))
+
+    def usb(self, root, name, vid, pid, product, iface_class, tty=""):
+        path = os.path.join(root, "devices", "platform", "usb1", name)
+        iface = os.path.join(path, f"{name}:1.0")
+        os.makedirs(iface)
+        for key, value in (("idVendor", vid), ("idProduct", pid), ("product", product),
+                           ("bDeviceClass", "00")):
+            with open(os.path.join(path, key), "w") as handle:
+                handle.write(value + "\n")
+        with open(os.path.join(iface, "bInterfaceClass"), "w") as handle:
+            handle.write(iface_class + "\n")
+        os.symlink(path, os.path.join(root, "bus", "usb", "devices", name))
+        os.symlink(iface, os.path.join(root, "bus", "usb", "devices", f"{name}:1.0"))
+        if tty:
+            os.makedirs(os.path.join(root, "class", "tty", tty))
+            os.symlink(iface, os.path.join(root, "class", "tty", tty, "device"))
+
+    def manager(self, root):
+        from app.core.state import StateStore
+        return DeviceManager(StateStore(os.path.join(self.tmp, "state.json")), sysfs=root,
+                             devroot=os.path.join(self.tmp, "dev"),
+                             proc=os.path.join(self.tmp, "noproc"), core_ids=lambda: {})
+
+    def test_nothing_on_usb_and_a_gadget_only_port(self):
+        root = self.sysfs()
+        self.hub(root)
+        os.makedirs(os.path.join(root, "class", "udc", "musb-hdrc.5.auto"))
+        self.usb(root, "1-1", "046d", "c31c", "USB Keyboard", "03")     # not a board
+        short, detail = self.manager(root).no_board_help()
+        self.assertEqual(short, "Nothing on USB")
+        self.assertIn("data cable", detail)
+        self.assertIn("musb-hdrc.5.auto", detail)
+        self.assertNotIn("Keyboard", detail)
+        self.assertNotIn("no USB host port", detail)
+
+    def test_device_without_a_serial_port_is_named(self):
+        root = self.sysfs()
+        self.hub(root)
+        self.usb(root, "1-1", "303a", "1001", "USB JTAG/serial debug unit", "02")
+        short, detail = self.manager(root).no_board_help()
+        self.assertIn("no serial port", short)
+        self.assertIn("303a:1001", detail)
+
+    def test_board_with_a_serial_port_is_not_reported_as_silent(self):
+        root = self.sysfs()
+        self.hub(root)
+        self.usb(root, "1-1", "303a", "1001", "USB JTAG/serial debug unit", "02", tty="ttyACM0")
+        summary = self.manager(root).usb_summary()
+        self.assertEqual(summary.host_ports, 1)
+        self.assertEqual([(d.usb_id, d.serial_port) for d in summary.devices],
+                         [("303a:1001", True)])
+
+    def test_no_host_port(self):
+        short, detail = self.manager(self.sysfs()).no_board_help()
+        self.assertIn("no USB host port", detail)
+
+
 class MatchTests(unittest.TestCase):
     def device(self, **kw):
         from app.hardware.devices import Device

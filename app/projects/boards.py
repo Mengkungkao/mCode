@@ -14,7 +14,9 @@ which tool defines which board:
 
 A combination that is not listed is not offered: for instance the official
 PlatformIO ``espressif32`` platform has no Arduino framework for the C6 and
-H2, so those boards offer PlatformIO only with ESP-IDF.
+H2, so those boards offer PlatformIO only with ESP-IDF, and it has no
+ESP32-C5 board at all (espressif32 8.0.0), so the C5 offers the Arduino CLI
+and ESP-IDF only.
 
 Pin maps and electrical limits are NOT part of this catalogue. mCode never
 invents them; the AI is told to state where a pin assignment comes from.
@@ -127,6 +129,15 @@ BOARDS: List[Board] = [
           upload_speeds=ESP_SPEEDS, default_upload_speed=921600, native_usb=True,
           usb_ids=("303a:1001",),
           notes="DevKitM-1 uses a bridge; many small C3 boards use the chip's USB-Serial/JTAG."),
+    Board("esp32-c5", "ESP32-C5", "esp32", "ESP32-C5", "riscv",
+          fqbn="esp32:esp32:esp32c5", core="esp32:esp32", idf_target="esp32c5",
+          flasher="esptool", upload_speeds=(115200, 230400, 921600),
+          default_upload_speed=921600, native_usb=True, usb_ids=("303a:1001",),
+          notes="Dual-band (2.4 and 5 GHz) Wi-Fi 6. Arduino through the Arduino CLI with "
+                "Espressif's core 3.3 or newer; ESP-IDF needs a release with C5 support "
+                "(5.5 or newer). PlatformIO's official platform has no ESP32-C5 board "
+                "(checked espressif32 8.0.0). On the chip's own USB port, Serial needs "
+                "'USB CDC on boot'."),
     Board("esp32-c6", "ESP32-C6", "esp32", "ESP32-C6", "riscv",
           fqbn="esp32:esp32:esp32c6", core="esp32:esp32",
           pio_board="esp32-c6-devkitc-1", pio_platform="espressif32", pio_frameworks=("espidf",),

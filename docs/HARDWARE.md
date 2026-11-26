@@ -14,7 +14,7 @@ A port's **name never identifies a board**. What each kind of ID tells:
 | Seen | mCode says | Why |
 |---|---|---|
 | CP210x `10c4:ea60`, CH340 `1a86:7523`, CH9102 `1a86:55d4`, CH343, FTDI `0403:*`, PL2303 | "<chip> adapter: the board behind it is unknown" | a bridge chip; ESP32 DevKits, Uno clones and GPS modules all use them |
-| Espressif `303a:1001` | "ESP32 with built-in USB" | the chip's own USB-Serial/JTAG (S3, C3, C6, H2): which ESP32 is unknown until identified |
+| Espressif `303a:1001` | "ESP32 with built-in USB" | the chip's own USB-Serial/JTAG (S3, C3, C5, C6, H2): which ESP32 is unknown until identified |
 | Arduino `2341:0043` and the other official IDs | "Arduino Uno (by its USB ID)" | the ID names one board |
 | Raspberry Pi `2e8a:0005` / `000a` | "Raspberry Pi Pico" | |
 | anything else | the product string | |
@@ -26,6 +26,41 @@ shown as "Cores say" in the desktop IDE.
 `esptool --port P chip-id`: read-only, but it resets the board. The answer
 ("ESP32-S3 (QFN56)", MAC, features) is remembered for that board's USB
 identity and used by the upload checks.
+
+## When no board is found
+
+An empty list means the kernel created no serial port for a board. mCode then
+reads `/sys/bus/usb/devices` and `/sys/class/udc` and says which case it is
+(LCD: *Connect Board › What to check*; desktop IDE: Hardware; terminal:
+`./run.sh cli devices`):
+
+- **Nothing on USB**: no device that could be a board (a known ID, or a CDC
+  or vendor-specific interface) is connected. Usual causes: a charge-only
+  cable, an unpowered board, or the wrong USB port (next point).
+- **A USB port that works only as a device** (`/sys/class/udc/*`): the
+  computer's power/OTG port is in gadget mode, so a board plugged in there is
+  never seen. Use another port.
+- **"<device>: no serial port"**: the device is on USB but no driver gave it a
+  serial port: a board in UF2/DFU download mode, or an adapter whose driver
+  is missing (`dmesg` after plugging it in says which).
+
+### Orange Pi Zero 2W
+
+Checked on the .130 board (Orange Pi 1.0.2 Jammy, kernel 6.1.31,
+2026-11-27): the USB-C port wired to USB0 (`usb@5100000`, MUSB) is set to
+`dr_mode = "peripheral"` in the device tree and its host controllers
+(`ehci0`/`ohci0`) are disabled, so it is a gadget-only port
+(`/sys/class/udc/musb-hdrc.5.auto`). The other USB-C port is a host port: an
+ESP32-C5 plugged in there enumerated at once as `303a:1001` on `ttyACM0`, and
+mCode listed it. According to the
+[DietPi forum](https://dietpi.com/forum/t/orange-pi-zero-2-w-enable-usb0-host-mode/23661),
+the host port is the one further from the board edge.
+
+Orange Pi's image ships an overlay, `sun50i-h616-usb0-host.dtbo`, that sets
+USB0 to host mode (`overlays=... usb0-host` in `/boot/orangepiEnv.txt`, then a
+reboot). That is a system change needing root, mCode never makes it, and it
+has not been tried: the power port then also has to work as a host while the
+board is powered through it or through the PiSugar.
 
 ## Permissions
 

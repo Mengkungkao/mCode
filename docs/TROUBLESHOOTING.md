@@ -25,9 +25,10 @@ login, boards, audio and permissions. mCode's log under mFruit OS is
 | **Flash: "<chip> adapter: mCode cannot see which board is behind it"** | Make sure it is your board, then confirm; *Identify chip* tells ESP32 chips apart. |
 | **Flash: "The board did not answer"** (ESP32) | Hold BOOT, press and release RESET (or plug in while holding BOOT), release BOOT, try again; try a lower upload speed or another cable. |
 | **Flash: "not in sync" / "programmer is not responding"** (AVR) | Nano clones: choose *Arduino Nano (old bootloader)*. Check the cable and the port. |
+| **Connect Board: "No board found"** | *What to check* says what mCode sees on USB: nothing at all (charge-only cable, unpowered board, or the board is on a power/OTG port that works only as a device: use another port; [details](HARDWARE.md#when-no-board-is-found)), or a device without a serial port (download mode, or a missing driver). |
 | **"No permission to open the port"** | `sudo usermod -aG dialout $USER`, then log in again. |
 | **"is open in minicom (1234)"** | Close the other program first. |
-| **Serial monitor shows nothing** | Wrong baud rate (the project's is in its info; ESP32 boot messages are 115200, the ROM uses 74880). ESP32-S3/C3 on their own USB port print only with *USB CDC on boot* (project settings). |
+| **Serial monitor shows nothing** | Wrong baud rate (the project's is in its info; ESP32 boot messages are 115200, the ROM uses 74880). ESP32-S3/C3/C5/C6 on their own USB port print only with *USB CDC on boot* (project settings). |
 | **Desktop IDE: "Sign in again"** | Open the link mCode printed, or pair again (LCD › Settings › Desktop IDE). *New pairing code* signs every browser out. |
 | **Desktop IDE not reachable from a laptop** | LCD › Settings › Desktop IDE › *Use from a computer* must be on; same network; the address shown there. |
 | **"File changed on disk"** | A build, Claude or another editor changed it: load the disk version or keep yours. |

@@ -115,7 +115,9 @@ Lists USB serial devices as mCode identifies them: "ESP32 with built-in USB",
 unknown". Choose one for its details (USB ID, driver, status) and *Use for
 <project>*, *Identify chip* (ESP32 boards: esptool reads the chip; the board
 restarts) or *Serial monitor*. Plugging and unplugging updates the list by
-itself.
+itself. When the list is empty, *What to check* says what mCode sees on USB
+(nothing, a power/OTG port that works only as a device, or a device without a
+serial port).
 
 ## Serial monitor
 

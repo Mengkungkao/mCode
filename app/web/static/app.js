@@ -711,7 +711,11 @@ function renderDashboard() {
 function renderHardware(body) {
   sideTools([["⟳", "Refresh", async () => { await POST("devices/refresh"); }]]);
   body.innerHTML = "";
-  if (!S.devices.length) body.appendChild(h("div", {class: "section"}, h("p", {class: "muted"}, "No USB serial device found. Connect a board, then refresh. mCode notices plug-in automatically.")));
+  if (!S.devices.length) {
+    const why = h("p", {class: "muted", style: "white-space: pre-wrap"});
+    body.appendChild(h("div", {class: "section"}, h("p", {class: "muted"}, "No USB serial device found. Connect a board, then refresh. mCode notices plug-in automatically."), why));
+    GET("devices").then((r) => { if (r.help) why.textContent = r.help.detail; }).catch(() => {});
+  }
   for (const d of S.devices) {
     const selected = d.port === S.selectedPort;
     const item = h("div", {class: "list-item"},

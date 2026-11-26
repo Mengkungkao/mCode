@@ -132,6 +132,7 @@ def _run(studio, args) -> int:
                   + (f"  [{device.problem}]" if device.problem else ""))
         if not devices:
             print("no USB serial devices")
+            print(studio.devices.no_board_help()[1])
         return 0
     if command in ("upload", "identify"):
         studio.tools.refresh(wait=True)

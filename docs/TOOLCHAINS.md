@@ -65,6 +65,7 @@ core's `boards.txt`).
 | ESP32-S2 | ESP32-S2 | `esp32:esp32:esp32s2` | `esp32-s2-saola-1` (arduino, espidf) | `esp32s2` |
 | ESP32-S3 | ESP32-S3 | `esp32:esp32:esp32s3` | `esp32-s3-devkitc-1` (arduino, espidf) | `esp32s3` |
 | ESP32-C3 | ESP32-C3 | `esp32:esp32:esp32c3` | `esp32-c3-devkitm-1` (arduino, espidf) | `esp32c3` |
+| ESP32-C5 | ESP32-C5 | `esp32:esp32:esp32c5` | — (no C5 board in the official platform, checked 8.0.0) | `esp32c5` (ESP-IDF 5.5 or newer) |
 | ESP32-C6 | ESP32-C6 | `esp32:esp32:esp32c6` | `esp32-c6-devkitc-1` (espidf only) | `esp32c6` |
 | ESP32-H2 | ESP32-H2 | `esp32:esp32:esp32h2` | `esp32-h2-devkitm-1` (espidf only) | `esp32h2` |
 | Arduino Uno | ATmega328P | `arduino:avr:uno` | `uno` | — |
@@ -85,7 +86,10 @@ opening an existing project folder; they are not offered in the wizard.
 
 The official PlatformIO `espressif32` platform has no Arduino framework for
 the C6 and H2, so mCode offers the Arduino CLI (Espressif core 3.x) or ESP-IDF
-for those. Uploading to the Raspberry Pi Pico (UF2) and to the Nano ESP32
+for those; it has no ESP32-C5 board at all (checked `espressif32` 8.0.0), so
+the C5 offers the Arduino CLI (Espressif core 3.3 or newer) or ESP-IDF. A
+real ESP32-C5 Arduino build (`esp32:esp32:esp32c5:CDCOnBoot=cdc`, core
+3.3.12, Arduino CLI 1.6.0) succeeded on the dev machine on 2026-11-27. Uploading to the Raspberry Pi Pico (UF2) and to the Nano ESP32
 (DFU) goes through the Arduino CLI's own upload tools; neither has been
 tested on hardware.
 
