@@ -98,6 +98,19 @@ contract copies, JS syntax, links, generated configuration doc).
 - Not verified: flashing the C5, Identify chip on the C5 (no esptool on the
   board yet), the LCD screens on the real display.
 
+## Session 2026-11-27 (0.1.8, AI "error_during_execution")
+
+- Owner: AI Engineer shows "Not finished, error_during_execution". Boards
+  .130 and .248 were offline, so the device logs were not read.
+- Reproduced with the real Claude Code 2.1.332 (throw-away config): `--resume`
+  of an unknown session prints "No conversation found…" AND emits a result
+  `error_during_execution` with that text in `errors`; mCode's retry only ran
+  when there was no result, and it saved session ids of requests that never
+  started a conversation, so the failure repeated. Fixed in `_run`, plus
+  readable failures (`_result_failure`) and a redacted log line.
+- Not verified on the device: whether this was the owner's cause; 0.1.8 shows
+  Claude Code's own reason if it was something else.
+
 ## Session 2026-11-27 (0.1.7, faster ESP-IDF builds)
 
 - Owner: ESP-IDF builds take too long. 0.1.7: new ESP-IDF projects use

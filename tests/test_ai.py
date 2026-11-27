@@ -178,6 +178,29 @@ class FailureAndAuthTests(AITestCase):
             time.sleep(0.02)
         self.assertEqual(turn.state, "cancelled")
 
+    def test_error_during_execution_is_explained_and_not_resumed(self):
+        """2026-11-27, owner: "Not finished, error_during_execution". The reason is in
+        the result's "errors"; a session that failed before its first turn has no
+        conversation to continue, so it must not be resumed next time."""
+        studio, project = self.make("ask")
+        self.scenario("execerror")
+        turn = self.run_turn(studio, project)
+        self.assertEqual(turn.state, "error")
+        self.assertIn("API Error: 500", turn.error)
+        self.assertNotIn("error_during_execution", turn.error)
+        self.assertFalse(studio.ai.project_ai(project.id).sessions)
+        self.scenario("edit")
+        turn = self.run_turn(studio, project)
+        self.assertEqual(turn.state, "review", turn.error)
+        call = [c["args"] for c in self.calls() if "-p" in c["args"]][-1]
+        self.assertIn("--session-id", call)
+
+    def test_max_turns_is_explained(self):
+        studio, project = self.make("ask")
+        self.scenario("maxturns")
+        turn = self.run_turn(studio, project)
+        self.assertIn("used up its steps", turn.error)
+
     def test_signed_out_refuses_with_login_fix(self):
         os.environ["FAKE_CLAUDE_LOGGED"] = "0"
         studio, project = self.make("ask")

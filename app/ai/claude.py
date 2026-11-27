@@ -286,6 +286,7 @@ def translate(event: dict, root: str = "") -> List[dict]:
                     "subtype": event.get("subtype", ""), "text": event.get("result") or "",
                     "turns": event.get("num_turns", 0), "duration_ms": event.get("duration_ms", 0),
                     "cost_usd": event.get("total_cost_usd"), "session_id": event.get("session_id"),
+                    "errors": [str(e) for e in event.get("errors") or []][:5],
                     "denials": [_denial(d, root) for d in event.get("permission_denials") or []]})
     return out
 

@@ -157,7 +157,13 @@ if "--session-id" in args:
 if "--resume" in args:
     session = args[args.index("--resume") + 1]
     if scenario == "nosession":
-        print(f"No conversation found with session ID: {session}", file=sys.stderr)
+        # What Claude Code 2.1.332 does (checked 2026-11-27): a stderr line AND a
+        # result event "error_during_execution" with the reason in "errors".
+        message = f"No conversation found with session ID: {session}"
+        print(message, file=sys.stderr)
+        print(json.dumps({"type": "result", "subtype": "error_during_execution",
+                          "is_error": True, "num_turns": 0, "session_id": session,
+                          "errors": [message]}), flush=True)
         sys.exit(1)
 prompt = args[args.index("--") + 1] if "--" in args else ""
 cwd = os.getcwd()
@@ -168,6 +174,15 @@ emit({"type": "system", "subtype": "init", "session_id": session, "model": "fake
 if scenario == "fail":
     print("API Error: usage limit reached", file=sys.stderr)
     sys.exit(1)
+if scenario == "execerror":
+    print(json.dumps({"type": "result", "subtype": "error_during_execution", "is_error": True,
+                      "num_turns": 0, "session_id": session,
+                      "errors": ["API Error: 500 Internal server error"]}), flush=True)
+    sys.exit(1)
+if scenario == "maxturns":
+    print(json.dumps({"type": "result", "subtype": "error_max_turns", "is_error": True,
+                      "num_turns": 30, "session_id": session}), flush=True)
+    sys.exit(0)
 if scenario == "slow":
     time.sleep(30)
 candidates = []

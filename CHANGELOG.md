@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.8] — 2026-11-27
+
+- Fix: the AI Engineer could fail every request with "Not finished ·
+  error_during_execution". When the conversation mCode continues
+  (`claude -p --resume`) cannot be found, Claude Code 2.1 reports a result
+  `error_during_execution` (with "No conversation found…" in `errors`)
+  instead of only exiting, so mCode's recovery never ran. mCode now starts a
+  new conversation once in that case, and only remembers a conversation
+  that really started (a request that failed before its first turn left a
+  session id with nothing to continue, so every later request failed too).
+- Claude failures are explained with Claude Code's own reason (its `errors`)
+  instead of the bare subtype, and logged in `mcode.log` (redacted);
+  "error_max_turns" says Claude used up its steps.
+
 ## [0.1.7] — 2026-11-27
 
 - Faster ESP-IDF builds:

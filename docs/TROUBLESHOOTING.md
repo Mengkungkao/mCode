@@ -14,6 +14,7 @@ login, boards, audio and permissions. mCode's log under mFruit OS is
 | **AI: "usage limit"** | Your Claude plan's limit for now; try later. The project is as it was (Ask mode) or can be undone. |
 | **AI: "cannot be reached"** | Check Wi-Fi; Claude Code needs the internet. |
 | **AI: "ran out of memory"** | The board is too small for Claude Code (Pi Zero 2 W). Use the desktop IDE from a bigger computer, or a Pi 4/5. |
+| **AI: "Not finished · error_during_execution"** (0.1.7 and older) | Claude Code could not continue the saved conversation. Update to 0.1.8 (starts a new conversation by itself), or AI Engineer › *New conversation*. 0.1.8 shows Claude Code's own reason instead. |
 | **"Approve or discard Claude's previous changes first"** | A review is waiting: AI Engineer › Apply / Discard, or the IDE's AI panel. |
 | **Voice: "Voice is off"** | No speech service: add `OPENAI_API_KEY` to mCode's `.env` or set a local speech command. Typing works without it. |
 | **Voice: "I did not catch that"** | Hold the button for the whole sentence; speak after the tone. `--diagnose` shows which microphone is used. |

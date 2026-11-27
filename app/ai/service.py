@@ -32,6 +32,7 @@ from typing import Dict, List, Optional
 from ..core import storage
 from ..core.config import AI_MODES
 from ..core.history import History
+from ..core.redact import redact
 from ..core.jobs import Job, JobCancelled, JobFailed, JobSpec
 from ..projects.model import Project, ProjectError
 from ..toolchains import detect
@@ -450,13 +451,25 @@ class AIService:
                 code = job.run(self._argv(turn, prompt, session_args, token), cwd=workdir,
                                env=env, timeout=timeout, check=False, show=False,
                                what="Claude Code")
-                if code != 0 and not turn.result and attempt == 1 and \
-                        "--resume" in session_args and _no_session(job.output()):
+                # Claude Code cannot find the conversation to continue: before 2.1 it
+                # only exited; 2.1 also reports a result "error_during_execution"
+                # with the reason in "errors" (checked with 2.1.332). Either way:
+                # start a new conversation once instead of failing every request.
+                lost = (not turn.result or not turn.result.get("ok")) and \
+                    _no_session(job.output() + "\n" + "\n".join(turn.result.get("errors", [])))
+                if attempt == 1 and "--resume" in session_args and lost:
                     job.say("mcode: the previous conversation is gone; starting a new one")
+                    log.info("%s: Claude conversation %s not found; starting a new one",
+                             project.name, existing)
                     pai.sessions.pop(slot, None)
+                    pai.save()
+                    turn.result = {}
                     continue
                 break
-            if turn.result.get("session_id"):
+            # Remember the conversation only when Claude really had one: a session
+            # that failed before its first turn has no transcript to resume.
+            if turn.result.get("session_id") and (turn.result.get("ok") or
+                                                  turn.result.get("turns")):
                 pai.sessions[slot] = turn.result["session_id"]
                 pai.save()
             if not turn.result:
@@ -464,8 +477,11 @@ class AIService:
                 raise JobFailed(_explain_failure("\n".join(tail)) or
                                 f"Claude Code stopped (exit code {code})")
             if not turn.result.get("ok"):
-                raise JobFailed(turn.result.get("text") or turn.result.get("subtype") or
-                                "Claude could not finish")
+                log.warning("%s: Claude Code finished with %s after %s turn(s): %s", project.name,
+                            turn.result.get("subtype") or "an error", turn.result.get("turns"),
+                            redact("; ".join(turn.result.get("errors") or [])
+                                   or turn.result.get("text") or "")[:500])
+                raise JobFailed(_result_failure(turn.result, job))
             return {"ok": True}
         finally:
             self.bridge.close_turn(token)
@@ -685,6 +701,25 @@ def _no_session(output: str) -> bool:
     text = output.lower()
     return "no conversation found" in text or "session not found" in text or \
         ("--resume" in text and "not found" in text)
+
+
+def _result_failure(result: dict, job: Job) -> str:
+    """A readable reason for a result that is not a success (never the bare
+    subtype such as "error_during_execution")."""
+    details = "\n".join([result.get("text") or ""] + list(result.get("errors") or []))
+    tail = "\n".join(l for l in job.tail(30) if not l.startswith("{"))
+    explained = _explain_failure(details) or _explain_failure(tail)
+    subtype = result.get("subtype") or ""
+    if subtype == "error_max_turns":
+        return "Claude used up its steps for this request before finishing. Ask it to " \
+               "continue, or split the request."
+    if explained:
+        return explained
+    if subtype == "error_during_execution":
+        return "Claude Code stopped with an internal error. Try again; if it happens " \
+               "again, start a new conversation (AI Engineer menu). Details are in the " \
+               "job log."
+    return "Claude could not finish."
 
 
 def _explain_failure(text: str) -> str:
