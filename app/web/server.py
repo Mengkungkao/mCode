@@ -478,6 +478,14 @@ def route(method: str, path: str, q: dict, handler):
         if sub == "update":
             fields = body.get("fields") or {}
             return {"project": studio.projects.update(p, **fields).summary()}
+        if sub == "board":
+            config = studio.boardconfig
+            if method != "GET":
+                p = config.apply(p, str(body.get("id", "")), str(body.get("value", "")))
+            connected = config.connected_board(p)
+            return {"project": p.summary(),
+                    "settings": [s.to_dict() for s in config.settings(p)],
+                    "connected": connected.to_dict() if connected else None}
         if sub == "rename":
             return {"project": studio.projects.rename(p, body.get("name", "")).summary()}
         if sub == "duplicate":

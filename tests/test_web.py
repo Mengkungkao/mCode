@@ -230,3 +230,22 @@ class QrTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BoardSettingsApiTests(WebCase):
+    def test_get_and_change_board_settings(self):
+        status, data, _ = self.request("POST", "/api/projects/create",
+                                       {"name": "Board API", "board_id": "esp32-c5",
+                                        "toolchain": "esp-idf", "framework": "espidf"})
+        self.assertEqual(status, 200, data)
+        pid = data["project"]["id"]
+        status, data, _ = self.request("GET", f"/api/project/{pid}/board")
+        self.assertEqual(status, 200, data)
+        self.assertEqual([s["id"] for s in data["settings"]], ["board", "upload_speed"])
+        status, data, _ = self.request("POST", f"/api/project/{pid}/board",
+                                       {"id": "board", "value": "esp32-c3"})
+        self.assertEqual(status, 200, data)
+        self.assertEqual(data["project"]["board_id"], "esp32-c3")
+        status, data, _ = self.request("POST", f"/api/project/{pid}/board",
+                                       {"id": "upload_speed", "value": "1"})
+        self.assertEqual(status, 400, data)

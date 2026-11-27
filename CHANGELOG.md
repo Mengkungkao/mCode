@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.1.6] — 2026-11-27
+
+- **Board settings** for every project (LCD: Project › Board settings;
+  desktop IDE: Project settings), like the Arduino IDE's Tools menu: board,
+  USB CDC on boot, upload speed, port, and for Arduino CLI projects the
+  board's own menus read from the installed core (`arduino-cli board
+  details`: CPU frequency, flash size, partition scheme, debug level…). An
+  ESP32 identified on the port is offered first (*Use ESP32-C3*). Only values
+  the tools define are accepted; "Erase all flash before upload" is left
+  out (erasing stays a separate, confirmed action).
+- Fix: changing a PlatformIO project's board (or upload speed, USB CDC on
+  boot) only changed mCode's record; `platformio.ini` kept building for the
+  old board. `platformio.ini` and `sketch.yaml` now follow the settings,
+  edited line by line inside the project's environment only.
+
 ## [0.1.5] — 2026-11-27
 
 - Faster builds on small boards: the automatic number of parallel compiles

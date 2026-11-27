@@ -24,6 +24,7 @@ from .paths import Paths
 from .projects.manager import ProjectManager
 from .projects.model import Project, ProjectError
 from .toolchains import detect
+from .toolchains.boardconfig import BoardConfig
 from .toolchains.builds import BuildService
 
 log = logging.getLogger("mcode.studio")
@@ -51,6 +52,7 @@ class Studio:
         self.builds = BuildService(self.jobs, self.tools, self.settings, self.history,
                                    publish=self.events.publish, paths=self.paths)
         self.devices = None
+        self.boardconfig = BoardConfig(self)
         self.monitor = None
         self.uploads = None
         self.libraries = None

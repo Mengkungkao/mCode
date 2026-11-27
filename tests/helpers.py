@@ -71,6 +71,18 @@ if log:
 if args[:1] == ["version"]:
     print(json.dumps({"VersionString": "1.6.0"}))
     sys.exit(0)
+if args[:2] == ["board", "details"]:
+    def menu(option, label, values, default):
+        return {"option": option, "option_label": label, "values": [
+            dict({"value": v, "value_label": l}, **({"selected": True} if v == default else {}))
+            for v, l in values]}
+    print(json.dumps({"fqbn": args[args.index("--fqbn") + 1], "config_options": [
+        menu("UploadSpeed", "Upload Speed", [("921600", "921600"), ("115200", "115200")], "921600"),
+        menu("CDCOnBoot", "USB CDC On Boot", [("default", "Disabled"), ("cdc", "Enabled")], "default"),
+        menu("CPUFreq", "CPU Frequency", [("160", "160MHz (WiFi)"), ("80", "80MHz (WiFi)")], "160"),
+        menu("EraseFlash", "Erase All Flash Before Sketch Upload",
+             [("none", "Disabled"), ("all", "Enabled")], "none")]}))
+    sys.exit(0)
 if args[:1] == ["compile"]:
     build = args[args.index("--build-path") + 1]
     sketch = args[-1]

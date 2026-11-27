@@ -9,7 +9,7 @@ From the Fruit Store once it is listed there, or sideload:
 
 ```bash
 # on the device, from a copy of this repository or a release archive
-mfruitctl sideload ~/mCode            # or: mfruitctl sideload mcode-0.1.5.tar.gz
+mfruitctl sideload ~/mCode            # or: mfruitctl sideload mcode-0.1.6.tar.gz
 mfruitctl jobs                        # wait until the install job is done
 mfruitctl launch mcode                # or open it from Home
 ```

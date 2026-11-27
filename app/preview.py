@@ -317,6 +317,7 @@ def scenes(studio, ui) -> List[Tuple[str, Callable[[], None]]]:
     add("23-new-created", creating)
     add("24-boards", lambda: (reset(), push(s.BoardsScreen(ui))))
     add("25-device", lambda: (reset(), push(s.DeviceScreen(ui, studio.devices.list()[0].port))))
+    add("25b-board-settings", lambda: (reset(), push(s.BoardSettingsScreen(ui, project.id))))
 
     def build_running():
         reset()

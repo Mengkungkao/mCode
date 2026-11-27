@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import threading
 import time
@@ -16,7 +17,7 @@ from typing import Callable, List, Optional
 
 from ..core.state import StateStore
 from ..paths import expand
-from . import backups, boards, gitutil, model, templates
+from . import backups, boards, buildfiles, gitutil, model, templates
 from .boards import ARDUINO_CLI, ESP_IDF, MAKE, PLATFORMIO
 from .files import walk_sources
 from .model import Project, ProjectError
@@ -241,9 +242,32 @@ class ProjectManager:
                 raise ProjectError(f"{board.name} is not supported by "
                                    f"{boards.TOOLCHAIN_NAMES.get(toolchain, toolchain)}.")
             project.platform = board.platform
+            if fields["board_id"] != project.board_id and "board_options" not in fields:
+                fields["board_options"] = {}      # each board has its own menus
+        if "upload_speed" in fields:
+            fields["upload_speed"] = int(fields["upload_speed"] or 0)
+            if fields["upload_speed"] < 0:
+                raise ProjectError("Upload speed must be a positive number.")
+        if "usb_cdc_on_boot" in fields:
+            fields["usb_cdc_on_boot"] = bool(fields["usb_cdc_on_boot"])
+        if "board_options" in fields:
+            options = fields["board_options"] or {}
+            if not isinstance(options, dict) or not all(
+                    isinstance(k, str) and isinstance(v, str) and re.fullmatch(r"[A-Za-z0-9_]+", k)
+                    and re.fullmatch(r"[A-Za-z0-9_.\-]+", v) for k, v in options.items()):
+                raise ProjectError("Board options must be names and values from the board's "
+                                   "menus.")
+            fields["board_options"] = dict(options)
         for key, value in fields.items():
             setattr(project, key, value)
         model.save(project)
+        if set(fields) & {"board_id", "upload_speed", "usb_cdc_on_boot", "board_options"}:
+            try:
+                for name in buildfiles.sync(project):
+                    log.info("%s: updated %s for its board settings", project.name, name)
+            except OSError as exc:
+                raise ProjectError(f"Saved, but {exc.filename or 'a build file'} could not be "
+                                   f"updated: {exc.strerror or exc}") from None
         self.publish("projects", {"updated": project.summary()})
         return project
 

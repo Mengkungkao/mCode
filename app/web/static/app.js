@@ -1078,12 +1078,28 @@ function zipImport() {
 async function projectSettings() {
   const p = S.project; const box = h("div", {});
   const form = h("div", {class: "form"});
-  const board = h("select", {}, S.boards.boards.filter((b) => b.toolchains.includes(p.toolchain)).map((b) => h("option", {value: b.id, selected: b.id === p.board_id}, b.name)));
   const baud = h("select", {}, BAUDS.map((b) => h("option", {value: b, selected: b === p.baud}, b)));
-  const cdc = h("input", {type: "checkbox", checked: p.usb_cdc_on_boot});
-  form.append(h("span", {}, "Board"), board, h("span", {}, "Serial baud"), baud, h("span", {}, "USB CDC on boot"), h("label", {}, cdc, "ESP32 boards with built-in USB"), h("span", {}, "Toolchain"), h("span", {}, `${p.toolchain_name} (${p.framework})`), h("span", {}, "Folder"), h("span", {class: "muted"}, p.path));
-  box.append(h("h2", {}, "Project settings"), form, h("div", {class: "buttons"}, h("button", {class: "btn", onclick: closeModal}, "Cancel"), h("button", {class: "btn primary", onclick: async () => { try { await POST(`project/${p.id}/update`, {fields: {board_id: board.value, baud: Number(baud.value), usb_cdc_on_boot: cdc.checked}}); closeModal(); await loadProject(p.id); toast("Saved", "ok"); } catch (e) { fail(e); } }}, "Save")));
+  form.append(h("span", {}, "Serial baud"), baud, h("span", {}, "Toolchain"), h("span", {}, `${p.toolchain_name} (${p.framework})`), h("span", {}, "Folder"), h("span", {class: "muted"}, p.path));
+  const boardBox = h("div", {class: "form"}, h("span", {class: "muted"}, "Loading board settings…"));
+  box.append(h("h2", {}, "Project settings"), h("h3", {}, "Board"), boardBox, h("h3", {}, "Project"), form, h("div", {class: "buttons"}, h("button", {class: "btn", onclick: closeModal}, "Close"), h("button", {class: "btn primary", onclick: async () => { try { await POST(`project/${p.id}/update`, {fields: {baud: Number(baud.value)}}); closeModal(); await loadProject(p.id); toast("Saved", "ok"); } catch (e) { fail(e); } }}, "Save")));
   openModal(box);
+  const show = (data) => {
+    boardBox.innerHTML = "";
+    if (data.connected && data.connected.id !== data.project.board_id) {
+      boardBox.append(h("span", {class: "warn"}, "Connected"), h("span", {}, `${data.connected.name} is on the port, not ${data.project.board_name}. `, h("a", {onclick: () => change("board", data.connected.id)}, `Use ${data.connected.name}`)));
+    }
+    for (const st of data.settings) {
+      let input;
+      if (st.kind === "toggle") input = h("label", {}, h("input", {type: "checkbox", checked: st.value === "1", onchange: (e) => change(st.id, e.target.checked ? "1" : "0")}), st.note ? " " + st.note : "");
+      else input = h("select", {title: st.note || "", onchange: (e) => change(st.id, e.target.value)}, st.choices.map((c) => h("option", {value: c.value, selected: c.value === st.value}, c.label)));
+      boardBox.append(h("span", {}, st.label), input);
+    }
+    boardBox.append(h("span", {}, ""), h("span", {class: "muted"}, "Changes are saved at once. Build again before flashing."));
+  };
+  const change = async (id, value) => {
+    try { const data = await POST(`project/${p.id}/board`, {id, value}); show(data); await loadProject(p.id); toast("Saved: build before flashing", "ok"); } catch (e) { fail(e); }
+  };
+  try { show(await GET(`project/${p.id}/board`)); } catch (e) { boardBox.innerHTML = ""; boardBox.append(h("span", {class: "err"}, e.message)); }
 }
 async function renameProject() { const name = prompt("New name:", S.project.name); if (!name) return; try { const r = await POST(`project/${S.project.id}/rename`, {name}); closeAllTabs(); await loadProject(r.project.id); } catch (e) { fail(e); } }
 async function duplicateProject() { try { const r = await POST(`project/${S.project.id}/duplicate`, {}); toast("Created " + r.project.name, "ok"); } catch (e) { fail(e); } }

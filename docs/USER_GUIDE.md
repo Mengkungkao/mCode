@@ -70,7 +70,7 @@ or libraries, or touch files outside the project. See
 ## Projects
 
 **My Projects** lists your projects (current one marked). Choose one for
-*Ask AI*, *Build*, *Flash*, *Serial monitor*, *Project info* and *More*
+*Ask AI*, *Build*, *Flash*, *Board settings*, *Serial monitor*, *Project info* and *More*
 (*Run tests*, *Rebuild*, *Clean*, *Back up now*, *Duplicate*, *Delete
 project*: deleting moves it to the project trash).
 
@@ -81,6 +81,19 @@ install) → **Name** (hold and say it, type it, or take the suggestion).
 *Creating project…* generates the layout the tool expects and says what is
 still missing (for example "Needs: ESP32 core (Espressif)" with an *Install*
 row).
+
+**Board settings** works like the Arduino IDE's Tools menu. The top line
+says what is on the port ("ttyACM0: ESP32-C3 (not this board)" after
+*Identify chip*), and *Use ESP32-C3* switches the project to it. Then:
+*Board* (the boards the project's tool supports), *USB CDC on boot* (ESP32
+with built-in USB, Arduino framework: on = `Serial` prints on the chip's own
+USB port), *Upload speed*, *Port*, and for Arduino CLI projects the board's
+own menus from the installed core (CPU frequency, flash size, partition
+scheme, debug level…). Changes are saved at once and `sketch.yaml` /
+`platformio.ini` follow; build again before flashing (mCode refuses
+firmware built for the old settings). *Erase all flash before upload* is not
+offered: erasing is a separate, confirmed action. The desktop IDE has the
+same settings under *Project settings*.
 
 Projects live in `~/mcode-projects` (Settings › Project folder). Each has a
 `.mcode/project.json` with its board and settings; the folder works with the

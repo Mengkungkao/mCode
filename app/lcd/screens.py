@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 from typing import Callable, List, Optional
 
@@ -1115,6 +1116,8 @@ class ProjectScreen(ListScreen):
             Item("Build", lambda: start_build(ui, project, "build"), select="build"),
             Item("Flash", lambda: ui.push(FlashConfirmScreen(ui, project.id)), kind="nav",
                  select="flash"),
+            Item("Board settings", lambda: ui.push(BoardSettingsScreen(ui, project.id)),
+                 kind="nav", value=project.board_name),
             Item("Serial monitor", lambda: ui.push(SerialScreen(ui)), kind="nav"),
             Item("Project info", lambda: ui.push(ReaderScreen(ui, "Project info",
                                                               project_text(self.studio, project))),
@@ -1209,6 +1212,135 @@ class ProjectMoreScreen(ListScreen):
 
 
 # ==================================================================== wizard
+
+class BoardSettingsScreen(ListScreen):
+    """The project's board settings, like the Arduino IDE's Tools menu
+    (toolchains/boardconfig.py): board, USB CDC on boot, upload speed, port and
+    the board's own menus from the installed Arduino core."""
+
+    title = "Board"
+    header_height = 50
+
+    def __init__(self, ui, project_id: str):
+        super().__init__(ui)
+        self.project_id = project_id
+        self.settings = None            # with the core's menus, once loaded
+        self.loading = False
+
+    def project(self):
+        try:
+            return self.studio.projects.find(self.project_id)
+        except ProjectError:
+            return None
+
+    def enter(self):
+        project = self.project()
+        if project is None or self.loading:
+            return
+        self.loading = True
+        threading.Thread(target=self._load, name="board-settings", daemon=True).start()
+
+    def _load(self):
+        project = self.project()
+        try:
+            self.settings = self.studio.boardconfig.settings(project) if project else []
+        except Exception:                 # isolation: show the basic settings instead
+            log.exception("board settings for %s", self.project_id)
+            self.settings = None
+        self.loading = False
+        self.ui.wake()
+
+    def on_event(self, topic, data):
+        if topic == "projects":
+            self.settings = None
+            self.enter()
+            return True
+        return topic == "devices"
+
+    def _current(self, project):
+        if self.settings is not None:
+            return self.settings
+        return self.studio.boardconfig.settings(project, menus=False)
+
+    def items(self):
+        ui = self.ui
+        project = self.project()
+        if project is None:
+            return [Item("Back", ui.pop, kind="back")]
+        config = self.studio.boardconfig
+        items = []
+        connected = config.connected_board(project)
+        settings = self._current(project)
+        board_setting = settings[0]
+        if connected is not None and connected.id != project.board_id and \
+                connected.id in {c.value for c in board_setting.choices}:
+            items.append(Item(f"Use {connected.name}", lambda: self._apply(
+                project, "board", connected.id), subtitle="the board on the port", tone="accent",
+                select="use"))
+        for setting in settings:
+            if setting.kind == "toggle":
+                items.append(Item(setting.label, lambda st=setting: self._apply(
+                    project, st.id, "0" if st.value == "1" else "1"), kind="toggle",
+                    value=setting.value == "1", select="switch"))
+            else:
+                value = "Default" if setting.id == "upload_speed" and setting.value == "0" \
+                    else setting.value_label()
+                items.append(Item(setting.label, lambda st=setting: self._choose(project, st),
+                                  kind="nav", value=value))
+            if setting.id == "upload_speed" or (setting.id == "board" and len(settings) == 1):
+                items.append(self._port_item(project))
+        if not any(i.label == "Port" for i in items):
+            items.append(self._port_item(project))
+        if self.settings is None and project.toolchain == "arduino-cli":
+            items.append(Item("Loading board options…", None, kind="info", enabled=False))
+        items.append(Item("Back", ui.pop, kind="back"))
+        return items
+
+    def _port_item(self, project):
+        devices = self.studio.devices
+        device = devices.selected(project) if devices else None
+        value = (device.short_port if device else "none")
+        return Item("Port", lambda: self.ui.push(BoardsScreen(self.ui)), kind="nav", value=value)
+
+    def _choose(self, project, setting):
+        ui = self.ui
+
+        def build():
+            out = [Item(c.label, lambda c=c: (ui.pop(), self._apply(project, setting.id, c.value)),
+                        mark="success" if c.value == setting.value else None, select="choose")
+                   for c in setting.choices]
+            out.append(Item("Back", ui.pop, kind="back"))
+            return out
+        ui.push(MenuScreen(ui, setting.label, build))
+
+    def _apply(self, project, setting_id, value):
+        try:
+            self.studio.boardconfig.apply(project, setting_id, value)
+        except Exception as exc:
+            self.ui.push(ReaderScreen(self.ui, "Can't change", _err(exc)))
+            return
+        self.ui.toast("Saved · build before flashing", "success")
+
+    def render_header(self, c, top):
+        t = c.theme
+        project = self.project()
+        if project is None:
+            return
+        connected = self.studio.boardconfig.connected_board(project)
+        devices = self.studio.devices
+        device = devices.selected(project) if devices else None
+        if device is None:
+            line, tone = "No board chosen · Connect Board", t.warning
+        elif connected is not None:
+            match = connected.id == project.board_id
+            line = f"{device.short_port}: {connected.name}" + ("" if match else " (not this board)")
+            tone = t.success if match else t.warning
+        else:
+            line, tone = f"{device.short_port}: {device.describe()}", t.text_muted
+        c.text(MARGIN, top + 4, project.board_name, 15, "semibold", t.text,
+               max_width=SCREEN_W - 2 * MARGIN)
+        c.text(MARGIN, top + 26, line, 12, "medium", tone, max_width=SCREEN_W - 2 * MARGIN)
+
 
 class NewPlatformScreen(ListScreen):
     title = "1 · Platform"
@@ -1774,6 +1906,9 @@ class FlashConfirmScreen(ListScreen):
                               select="build"))
         if failed & {"device", "match", "port", "permission"}:
             items.append(Item("Connect Board", lambda: ui.push(BoardsScreen(ui)), kind="nav"))
+        if failed & {"match", "board", "firmware"}:
+            items.append(Item("Board settings", lambda: ui.push(BoardSettingsScreen(
+                ui, project.id)), kind="nav"))
         items.append(Item("Check again", self.enter, select="check"))
         items.append(Item("Back", ui.pop, kind="back"))
         return items

@@ -309,3 +309,51 @@ class OtherChipTests(LcdCase):
         self.ui.push(s.NewBoardScreen(self.ui, "esp32"))
         first = self.ui.top().items()[0]
         self.assertEqual((first.label, first.subtitle), ("ESP32-C5", "connected now"))
+
+
+class BoardSettingsScreenTests(LcdCase):
+    def setUp(self):
+        super().setUp()
+        devices = self.studio.devices
+        acm = next(d for d in devices.list() if d.short_port == "ttyACM0")
+        devices.remember_chip(acm, {"chip": "ESP32-C3"})
+        self.project = self.studio.projects.create("C3 test", "esp32-s3", "platformio",
+                                                   "arduino", init_git=False)
+        devices.select(devices.get(acm.port), self.project)
+        self.ui.push(s.ProjectScreen(self.ui, self.project.id))
+        labels = [i.label for i in self.ui.top().items()]
+        self.ui.top().index = labels.index("Board settings")
+        self.hold()
+        self.assertEqual(self.top(), "BoardSettingsScreen")
+        self.ui.top()._load()
+
+    def test_use_the_connected_board_and_switch_cdc(self):
+        screen = self.ui.top()
+        labels = [i.label for i in screen.items()]
+        self.assertEqual(labels[0], "Use ESP32-C3")
+        screen.index = 0
+        self.hold()
+        self.assertEqual(self.studio.projects.find(self.project.id).board_id, "esp32-c3")
+        screen._load()
+        labels = [i.label for i in screen.items()]
+        self.assertNotIn("Use ESP32-C3", labels)
+        screen.index = labels.index("USB CDC on boot")
+        self.hold()
+        project = self.studio.projects.find(self.project.id)
+        self.assertTrue(project.usb_cdc_on_boot)
+        with open(os.path.join(project.path, "platformio.ini")) as handle:
+            text = handle.read()
+        self.assertIn("board = esp32-c3-devkitm-1", text)
+        self.assertIn("-DARDUINO_USB_CDC_ON_BOOT=1", text)
+
+    def test_choose_upload_speed_from_a_list(self):
+        screen = self.ui.top()
+        labels = [i.label for i in screen.items()]
+        screen.index = labels.index("Upload speed")
+        self.hold()
+        self.assertEqual(self.top(), "MenuScreen")
+        choices = [i.label for i in self.ui.top().items()]
+        self.ui.top().index = choices.index("230400")
+        self.hold()
+        self.assertEqual(self.studio.projects.find(self.project.id).upload_speed, 230400)
+        self.assertEqual(self.top(), "BoardSettingsScreen")

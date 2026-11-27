@@ -98,6 +98,20 @@ contract copies, JS syntax, links, generated configuration doc).
 - Not verified: flashing the C5, Identify chip on the C5 (no esptool on the
   board yet), the LCD screens on the real display.
 
+## Session 2026-11-27 (0.1.6, board settings)
+
+- Owner: an ESP32-C3 would not take an upload "even after changing the
+  board", and asked for Arduino-IDE style board configuration. On the .130
+  the project (BlinkLED) was still an ESP32-C5 Arduino project while esptool
+  identified an ESP32-C3 on ttyACM0, so the match check refused.
+- 0.1.6: `toolchains/boardconfig.py` (board, USB CDC on boot, upload speed,
+  core menus from `arduino-cli board details`; EraseFlash hidden), LCD
+  Project › Board settings, desktop IDE Project settings › Board, API
+  `project/<id>/board`. `projects/buildfiles.py` keeps platformio.ini and
+  sketch.yaml in step (before, a PlatformIO board change did not reach
+  platformio.ini). Real C3 build with CDC on, CPU 80 MHz, 460800 on the dev
+  machine; the board's core 4.0.0 lists the same menus. Not flashed.
+
 ## Session 2026-11-27 (0.1.5, build speed)
 
 - Owner: compiling is slow. Cause: automatic jobs were 1 on every board

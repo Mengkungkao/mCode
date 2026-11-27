@@ -28,6 +28,7 @@ login, boards, audio and permissions. mCode's log under mFruit OS is
 | **Flash: "is an Arduino Uno (by its USB ID), but the project is for ESP32-S3"** | Wrong board or port: choose the right one in Connect Board, or change the project's board. |
 | **Flash: "esptool found an ESP32-C5… but the project is for ESP32"** | The project was made for another ESP32 than the one connected (*ESP32 DevKit* is the original ESP32). Choose *Make it ESP32-C5* on that screen (Arduino CLI or ESP-IDF projects), or *New ESP32-C5 project* (PlatformIO has no ESP32-C5). |
 | **Flash: "The firmware was built for ESP32 DevKit; the project is now for ESP32-C5"** | The project's board changed after the last build: build again. |
+| **The board is not the project's board** (an ESP32-C3 on an ESP32-C5 project) | Project › *Board settings* › *Use ESP32-C3* (shown after *Identify chip*), or choose *Board*; then *Build* and *Flash*. Nothing prints on the chip's own USB port? Turn on *USB CDC on boot* (Arduino framework). |
 | **Flash: "<chip> adapter: mCode cannot see which board is behind it"** | Make sure it is your board, then confirm; *Identify chip* tells ESP32 chips apart. |
 | **Flash: "The board did not answer"** (ESP32) | Hold BOOT, press and release RESET (or plug in while holding BOOT), release BOOT, try again; try a lower upload speed or another cable. |
 | **Flash: "not in sync" / "programmer is not responding"** (AVR) | Nano clones: choose *Arduino Nano (old bootloader)*. Check the cable and the port. |
