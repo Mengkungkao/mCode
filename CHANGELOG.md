@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.5] — 2026-11-27
+
+- Faster builds on small boards: the automatic number of parallel compiles
+  (Settings › Compiler jobs = 0) now follows the memory that is free when
+  the build starts (one job per CPU core while about 160 MB is left per job,
+  3 on the .130) instead of "1 job under 1.1 GB". Measured on the 1 GB Orange
+  Pi Zero 2W (.130) with mCode open: clean ESP32-C5 Arduino build 143 s with
+  1 job, 97 s with 2, 83 s with 4; clean ESP-IDF build with 4 jobs 563 s,
+  free memory down to 131 MB plus 227 MB in zram swap, so 3 is the safer
+  default. Free memory is read when each build starts, so a running Claude
+  Code session means fewer jobs. Applies to the Arduino CLI, PlatformIO,
+  ESP-IDF and Make.
+
 ## [0.1.4] — 2026-11-27
 
 - **Can't flash yet** because the connected ESP32 is a different chip than

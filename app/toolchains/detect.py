@@ -102,13 +102,14 @@ def _newest(paths: List[str]) -> str:
 
 def machine() -> dict:
     """CPU architecture and memory (for warnings on small boards)."""
-    total = 0
+    total = available = 0
     try:
         with open("/proc/meminfo") as handle:
             for line in handle:
                 if line.startswith("MemTotal:"):
                     total = int(line.split()[1]) // 1024
-                    break
+                elif line.startswith("MemAvailable:"):
+                    available = int(line.split()[1]) // 1024
     except OSError:
         pass
     model = ""
@@ -119,7 +120,8 @@ def machine() -> dict:
                 break
         except OSError:
             continue
-    return {"arch": platform.machine(), "memory_mb": total, "cpus": os.cpu_count() or 1,
+    return {"arch": platform.machine(), "memory_mb": total, "available_mb": available,
+            "cpus": os.cpu_count() or 1,
             "model": model, "python": platform.python_version(), "system": platform.system()}
 
 

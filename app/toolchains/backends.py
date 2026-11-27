@@ -66,18 +66,28 @@ class Plan:
     labels: List[str] = field(default_factory=list)   # per-step description
 
 
+# Automatic parallel compiles: one per CPU core while each job keeps about
+# JOB_MB of the memory that is free when the build starts, leaving RESERVE_MB
+# for mCode and the system. Measured 2026-11-27 on a 1 GB Orange Pi Zero 2W
+# with mCode running: clean ESP32-C5 Arduino build (core 4.0.0) 1 job 143 s,
+# 2 jobs 97 s, 4 jobs 83 s (free memory never below 331 MB); clean ESP-IDF
+# 6.1.1 build with 4 jobs 563 s, free memory down to 131 MB and 227 MB in
+# zram swap (no out-of-memory). 160 MB per job gives 3 jobs there.
+JOB_MB = 160
+RESERVE_MB = 150
+
+
 def build_jobs(settings, machine: Optional[dict] = None) -> int:
     value = int(settings.get("dev.build_jobs") or 0)
     if value:
         return value
     info = machine or detect.machine()
-    cpus = int(info.get("cpus") or 1)
-    memory = int(info.get("memory_mb") or 0)
-    if memory and memory < 1100:
-        return 1
-    if memory and memory < 2200:
-        return min(2, cpus)
-    return max(1, cpus)
+    cpus = max(1, int(info.get("cpus") or 1))
+    free = int(info.get("available_mb") or 0)
+    if not free:                          # no /proc/meminfo: assume a small board
+        total = int(info.get("memory_mb") or 0)
+        return cpus if total >= 4000 else 1
+    return max(1, min(cpus, (free - RESERVE_MB) // JOB_MB))
 
 
 def newest_source_mtime(project: Project) -> float:

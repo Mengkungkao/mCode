@@ -98,6 +98,15 @@ contract copies, JS syntax, links, generated configuration doc).
 - Not verified: flashing the C5, Identify chip on the C5 (no esptool on the
   board yet), the LCD screens on the real display.
 
+## Session 2026-11-27 (0.1.5, build speed)
+
+- Owner: compiling is slow. Cause: automatic jobs were 1 on every board
+  under 1.1 GB. Measured on the .130 with mCode open: clean ESP32-C5 Arduino
+  build 143 s (1 job), 97 s (2), 83 s (4); clean ESP-IDF 6.1.1 build with 4
+  jobs 563 s, free memory down to 131 MB + 227 MB zram, no OOM. 0.1.5: jobs
+  = min(cores, (MemAvailable - 150) / 160) at build start (3 on the .130).
+  PlatformIO's ESP-IDF build took 27.7 min there vs 8.6 min with ESP-IDF.
+
 ## Session 2026-11-27 (0.1.4, "Can't flash yet")
 
 - Owner: "Can't flash yet" on the .130. Cause: TestLED (Arduino) and the new

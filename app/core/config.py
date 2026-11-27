@@ -129,7 +129,9 @@ FIELDS: List[Field] = [
     Field("dev.esptool", "path", "", "esptool program", "Empty: found automatically."),
     Field("dev.python", "path", "", "Python for tools",
           "Python used to create mCode's tool environment (PlatformIO, esptool)."),
-    Field("dev.build_jobs", "int", 0, "Compiler jobs", "0: automatic (1 on boards under 1 GB).",
+    Field("dev.build_jobs", "int", 0, "Compiler jobs",
+          "0: automatic: one per CPU core while about 160 MB of free memory is left per job "
+          "(3 on a 1 GB Orange Pi Zero 2W with mCode open, 1 on a 512 MB Pi Zero 2 W).",
           minimum=0, maximum=64),
     Field("dev.build_timeout_s", "int", 2400, "Build time limit (seconds)", minimum=60,
           maximum=14400),

@@ -285,6 +285,30 @@ sys.exit(1)
 """
 
 
+class BuildJobsTests(unittest.TestCase):
+    """Parallel compiles follow the free memory (measured on the 1 GB .130 board),
+    not a fixed "1 job under 1.1 GB"."""
+
+    def jobs(self, **machine):
+        return backends.build_jobs(Settings(None), machine)
+
+    def test_one_gigabyte_board_with_free_memory_runs_three_jobs(self):
+        self.assertEqual(self.jobs(cpus=4, memory_mb=981, available_mb=709), 3)
+
+    def test_little_free_memory_means_fewer_jobs(self):
+        self.assertEqual(self.jobs(cpus=4, memory_mb=981, available_mb=480), 2)
+        self.assertEqual(self.jobs(cpus=4, memory_mb=416, available_mb=250), 1)
+
+    def test_big_machine_and_unknown_memory(self):
+        self.assertEqual(self.jobs(cpus=12, memory_mb=16000, available_mb=12000), 12)
+        self.assertEqual(self.jobs(cpus=4, memory_mb=512), 1)
+
+    def test_setting_wins(self):
+        settings = Settings(None)
+        settings.set("dev.build_jobs", 3, save=False)
+        self.assertEqual(backends.build_jobs(settings, {"cpus": 1, "available_mb": 100}), 3)
+
+
 class EspIdfInstallerTests(TempCase):
     def setUp(self):
         super().setUp()

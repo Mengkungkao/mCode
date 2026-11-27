@@ -43,7 +43,7 @@ project, chosen board per project, identified chips), `.env` (optional
 | `dev.idf_path` | empty | path |  | ESP-IDF folder. Empty: IDF_PATH, ~/esp/esp-idf or the newest ~/esp/v*/esp-idf. Installing ESP-IDF from Development tools sets it. |
 | `dev.esptool` | empty | path |  | esptool program. Empty: found automatically. |
 | `dev.python` | empty | path |  | Python for tools. Python used to create mCode's tool environment (PlatformIO, esptool). |
-| `dev.build_jobs` | `0` | 0–64 |  | Compiler jobs. 0: automatic (1 on boards under 1 GB). |
+| `dev.build_jobs` | `0` | 0–64 |  | Compiler jobs. 0: automatic: one per CPU core while about 160 MB of free memory is left per job (3 on a 1 GB Orange Pi Zero 2W with mCode open, 1 on a 512 MB Pi Zero 2 W). |
 | `dev.build_timeout_s` | `2400` | 60–14400 |  | Build time limit (seconds) |
 | `dev.upload_timeout_s` | `300` | 30–3600 |  | Upload time limit (seconds) |
 | `dev.warnings` | `"default"` | `none`, `default`, `more`, `all` |  | Compiler warnings |
