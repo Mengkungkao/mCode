@@ -134,7 +134,7 @@ class BuildService:
                   "errors": report.get("errors", 0), "warnings": report.get("warnings", 0),
                   "size": report.get("size", {}), "source": source,
                   "tests": job.result.get("tests"), "toolchain": project.toolchain,
-                  "board": project.board_name}
+                  "board": project.board_name, "board_id": project.board_id}
         with self._lock:
             self._last[project.id] = dict(record, output_tail=job.tail(120),
                                           diagnostics=report.get("diagnostics", [])[:60],
@@ -160,6 +160,15 @@ class BuildService:
                 os.unlink(marker)
         except OSError as exc:
             log.warning("%s: could not record the interrupted build: %s", project.name, exc)
+
+    def built_for(self, project_id: str) -> Optional[dict]:
+        """{"board_id", "toolchain"} of the project's last successful build, when known."""
+        for record in self.history.recent(["build"], project_id=project_id, limit=40):
+            if record.get("action") in ("build", "rebuild") and record.get("state") == "succeeded":
+                if not record.get("board_id"):
+                    return None             # recorded before 0.1.4: unknown
+                return {"board_id": record["board_id"], "toolchain": record.get("toolchain", "")}
+        return None
 
     def last(self, project_id: str) -> Optional[dict]:
         with self._lock:

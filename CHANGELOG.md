@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.4] — 2026-11-27
+
+- **Can't flash yet** because the connected ESP32 is a different chip than
+  the project's (for example an ESP32-C5 on an *ESP32 DevKit* project) now
+  offers the way out: *Make it ESP32-C5* (same toolchain: the project's board
+  changes and it is rebuilt) or *New ESP32-C5 project* when the project's
+  tool has no such board (PlatformIO). The board problem is shown before
+  "build first".
+- The new-project wizard lists an identified, connected ESP32 first
+  ("connected now").
+- Fix: firmware built before the project's board was changed no longer
+  counts as current (the board is not in a source file); flashing asks for a
+  new build.
+
 ## [0.1.3] — 2026-11-27
 
 - ESP-IDF can be installed from Settings › Development tools (LCD and desktop

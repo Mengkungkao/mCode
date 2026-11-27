@@ -267,3 +267,45 @@ class LoginStepsTests(LcdCase):
         self.assertIn(("hold", "send code"), screen.hints(False))
         self.hold()
         self.assertEqual(sent, ["ab#c"])
+
+
+class OtherChipTests(LcdCase):
+    """The flash check finds an ESP32-C5 where the project is for an ESP32 DevKit
+    (the owner's .130 board, 2026-11-27)."""
+
+    def setUp(self):
+        super().setUp()
+        devices = self.studio.devices
+        self.acm = next(d for d in devices.list() if d.short_port == "ttyACM0")
+        devices.remember_chip(self.acm, {"chip": "ESP32-C5HF4 (revision v1.2)"})
+
+    def flash_screen(self, toolchain, framework):
+        project = self.studio.projects.create(f"LED {toolchain}", "esp32-devkit", toolchain,
+                                              framework, init_git=False)
+        self.studio.devices.select(self.studio.devices.get(self.acm.port), project)
+        screen = s.FlashConfirmScreen(self.ui, project.id)
+        self.ui.push(screen)
+        screen.enter()
+        self.assertIn("ESP32-C5", screen.plan.problem())
+        return project, screen
+
+    def test_same_toolchain_offers_to_switch_the_board(self):
+        project, screen = self.flash_screen("arduino-cli", "arduino")
+        labels = [i.label for i in screen.items()]
+        self.assertIn("Make it ESP32-C5", labels)
+        screen.index = labels.index("Make it ESP32-C5")
+        self.hold()
+        self.assertEqual(self.top(), "ConfirmScreen")
+        self.hold()                                       # "Change and build"
+        self.assertEqual(self.studio.projects.find(project.id).board_id, "esp32-c5")
+
+    def test_toolchain_without_the_chip_offers_a_new_project(self):
+        _project, screen = self.flash_screen("platformio", "espidf")
+        labels = [i.label for i in screen.items()]
+        self.assertIn("New ESP32-C5 project", labels)
+        self.assertNotIn("Make it ESP32-C5", labels)
+
+    def test_wizard_lists_the_connected_chip_first(self):
+        self.ui.push(s.NewBoardScreen(self.ui, "esp32"))
+        first = self.ui.top().items()[0]
+        self.assertEqual((first.label, first.subtitle), ("ESP32-C5", "connected now"))

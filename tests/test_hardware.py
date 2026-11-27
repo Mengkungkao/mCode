@@ -291,6 +291,23 @@ class UploadTests(TempCase):
         self.assertIn("device", failed)
         self.assertEqual(plan.to_dict()["token"], "")
 
+    def test_firmware_built_for_another_board_is_refused(self):
+        """The board is in .mcode/project.json, not a source file: after switching the
+        project from ESP32-S3 to ESP32-C5 the S3 firmware looked current."""
+        studio, project = self.ready()
+        port = os.path.join(self.tmp, "dev", "ttyUSB0")
+        studio.jobs.wait(studio.builds.run(project, "build").id, 30)
+        self.assertTrue(wait_for(lambda: studio.builds.built_for(project.id)))
+        self.assertTrue(studio.uploads.prepare(project, port).ok)
+        project = studio.projects.update(project, board_id="esp32-c5")
+        plan = studio.uploads.prepare(project, port)
+        self.assertFalse(plan.ok)
+        self.assertIn("built for ESP32-S3", plan.problem())
+        studio.jobs.wait(studio.builds.run(project, "rebuild").id, 30)
+        self.assertTrue(wait_for(lambda: (studio.builds.built_for(project.id) or {}).get(
+            "board_id") == "esp32-c5"))
+        self.assertTrue(studio.uploads.prepare(project, port).ok)
+
     def test_mismatch_blocks_and_bridge_warns(self):
         studio, project = self.ready()
         studio.jobs.wait(studio.builds.run(project, "build").id, 30)

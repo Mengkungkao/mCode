@@ -43,12 +43,12 @@ Statuses: NOT IMPLEMENTED · IMPLEMENTED · SOFTWARE TESTED · HARDWARE VERIFIED
 | Claude sign-in through mCode | IMPLEMENTED | SOFTWARE TESTED (fake CLI); real CLI's link output observed | NOT VERIFIED end to end (would replace the owner's login) |
 | Arduino compilation | IMPLEMENTED | SOFTWARE TESTED + real Uno builds (Arduino CLI 1.6.0 + AVR 1.8.8; PlatformIO 6.2.0) | N/A |
 | ESP32 compilation | IMPLEMENTED | SOFTWARE TESTED + real ESP32-S3 builds (Arduino CLI + Espressif core 3.3.12; PlatformIO espressif32) | N/A |
-| ESP-IDF projects | IMPLEMENTED | SOFTWARE TESTED (command generation only) | BLOCKED (ESP-IDF not installed here) |
+| ESP-IDF projects | IMPLEMENTED | Real builds: ESP32-C5 and ESP32-S3 with ESP-IDF 6.1.1 (dev machine); C5 build on the .130 | see ESP32 flashing |
 | Host unit tests | IMPLEMENTED | real `pio test -e native` 2/2 | N/A |
 | USB detection | IMPLEMENTED | SOFTWARE TESTED (simulated sysfs; netlink bind checked; "no board" help from sysfs) | HARDWARE VERIFIED for an ESP32-C5 on its own USB (303a:1001, ttyACM0) on the .130 Orange Pi Zero 2W, through `cli devices` (LCD list not looked at) |
 | ESP32-C5 projects | IMPLEMENTED (0.1.1) | SOFTWARE TESTED + real Arduino CLI build (`esp32c5:CDCOnBoot=cdc`, core 3.3.12) | flashing NOT VERIFIED |
 | Arduino flashing | IMPLEMENTED | SOFTWARE TESTED (fake uploader; checks, tokens, monitor pause) | NOT VERIFIED |
-| ESP32 flashing | IMPLEMENTED | SOFTWARE TESTED (fake uploader) | NOT VERIFIED |
+| ESP32 flashing | IMPLEMENTED | SOFTWARE TESTED (fake uploader) | Flash write verified by esptool ("Hash of data verified") on the .130: ESP32-C5HF4 rev v1.2, ESP-IDF 6.1.1 project, mCode 0.1.1, 2026-11-27 11:12 (owner's run, job log). Firmware behaviour not observed by me |
 | Chip detection / erase (esptool) | IMPLEMENTED | SOFTWARE TESTED (parsing, command names) | NOT VERIFIED |
 | Serial monitor | IMPLEMENTED | SOFTWARE TESTED (real PTYs: exclusivity, 74880 baud, hex, search, save, suspend/resume) | NOT VERIFIED |
 | Libraries | IMPLEMENTED | SOFTWARE TESTED (partly); real index use NOT VERIFIED | N/A |
@@ -97,6 +97,18 @@ contract copies, JS syntax, links, generated configuration doc).
   `catalog-sync` moves the pin by itself on each release.
 - Not verified: flashing the C5, Identify chip on the C5 (no esptool on the
   board yet), the LCD screens on the real display.
+
+## Session 2026-11-27 (0.1.4, "Can't flash yet")
+
+- Owner: "Can't flash yet" on the .130. Cause: TestLED (Arduino) and the new
+  BlinkLED (PlatformIO/ESP-IDF) were made for *ESP32 DevKit* while the board
+  is an ESP32-C5 (esptool: ESP32-C5HF4); mCode's match check refused, as
+  designed. The earlier ESP-IDF ESP32-C5 BlinkLED had flashed fine (11:12).
+- 0.1.4: on a chip mismatch the LCD offers *Make it ESP32-C5* (same
+  toolchain) or *New ESP32-C5 project* (PlatformIO has no C5); the board
+  problem shows before "build first"; the wizard lists the connected chip
+  first; firmware built for another board/toolchain is refused
+  (`BuildService.built_for`, negative control done).
 
 ## Session 2026-11-27 (0.1.3, ESP-IDF installer)
 

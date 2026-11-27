@@ -101,7 +101,11 @@ mode you approve the fix and mCode rebuilds.
 * no other program has the port open (the serial monitor pauses itself);
 * the board fits the project (an Uno's USB ID on an ESP32 project, an ESP32
   on an AVR project or a different ESP32 chip stops the flash; a plain
-  USB-UART adapter cannot tell, so mCode says so).
+  USB-UART adapter cannot tell, so mCode says so). When the chip was
+  identified, **Can't flash yet** offers *Make it ESP32-C5* (the project's
+  board changes and it is rebuilt) or, when the project's tool has no such
+  board, *New ESP32-C5 project*. The new-project wizard lists an identified,
+  connected chip first ("connected now").
 
 Then **Flash firmware?** shows board, project and port: hold on *Confirm
 flash*. *Flashing…* shows progress; **Flash successful** says whether the

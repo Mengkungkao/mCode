@@ -240,6 +240,13 @@ def family_of_mcu(mcu: str) -> str:
     return re.sub(r"[^a-z0-9]", "", (mcu or "").lower())
 
 
+def for_esp_family(family: str) -> Optional[Board]:
+    """The catalogue's ESP32 board for a chip family that esptool reported
+    ("esp32c5" -> ESP32-C5); None when the catalogue has none."""
+    return next((b for b in BOARDS if b.platform == "esp32" and family_of_mcu(b.mcu) == family),
+                None)
+
+
 # ------------------------------------------------- installed core definitions
 
 _USB_LINE = re.compile(r"^([A-Za-z0-9_\-]+)\.(?:upload_port\.(\d+)\.(vid|pid)|(vid|pid)\.(\d+)|"

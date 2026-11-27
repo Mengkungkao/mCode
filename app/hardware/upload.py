@@ -82,8 +82,13 @@ class UploadPlan:
     def warnings(self) -> List[Check]:
         return [c for c in self.checks if not c.ok and c.level == "warning"]
 
+    # What to fix first: a wrong board or port makes building pointless.
+    PROBLEM_ORDER = ("board", "tool", "device", "permission", "port", "match", "firmware")
+
     def problem(self) -> str:
         failed = [c for c in self.checks if not c.ok and c.level == "error"]
+        failed.sort(key=lambda c: self.PROBLEM_ORDER.index(c.id)
+                    if c.id in self.PROBLEM_ORDER else len(self.PROBLEM_ORDER))
         return failed[0].message if failed else ""
 
     def to_dict(self) -> dict:
@@ -194,6 +199,15 @@ class UploadService:
             if last and last.get("action") in ("build", "rebuild") and last.get("state") != "succeeded":
                 checks.append(Check("firmware", False, "The last build failed. Fix it and build "
                                     "again."))
+            # The board lives in .mcode/project.json, which is not a source file: after
+            # changing the project's board the old firmware would still look current.
+            built = self.studio.builds.built_for(project.id)
+            if built and (built["board_id"] != project.board_id or
+                          (built["toolchain"] and built["toolchain"] != project.toolchain)):
+                old = boards.get(built["board_id"])
+                checks.append(Check("firmware", False, f"The firmware was built for "
+                                    f"{old.name if old else built['board_id']}; the project is "
+                                    f"now for {project.board_name}. Build again."))
         # -- device
         if device is None:
             checks.append(Check("device", False, "No board selected or the board is not "

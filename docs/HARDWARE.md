@@ -79,7 +79,9 @@ confirm, mCode checks:
 
 1. the project's board has an upload method mCode supports;
 2. the firmware exists and is newer than every source file (otherwise *Build
-   now*); a failed last build also stops it;
+   now*); a failed last build also stops it, and so does firmware built for
+   another board or toolchain than the project has now (the board is in
+   `.mcode/project.json`, which is not a source file);
 3. the chosen device is still connected and readable;
 4. no other program has the port open (it names it); the serial monitor
    pauses and resumes by itself;
@@ -87,7 +89,10 @@ confirm, mCode checks:
    ESP32 (native USB or identified chip) on an AVR project, a different ESP32
    chip, or a native-USB ESP32 on a project for the original ESP32 (no USB of
    its own) **stop** the upload; an unidentified adapter is a **warning** you
-   accept by confirming;
+   accept by confirming. When esptool identified the chip (*Identify chip*)
+   and the catalogue has that ESP32, the LCD offers *Make it <board>* (same
+   toolchain: the project's board changes and it is rebuilt) or *New <board>
+   project* (PlatformIO has no ESP32-C5, for example);
 6. the upload tool is installed.
 
 Confirming uses a one-time token valid for five minutes; if the firmware

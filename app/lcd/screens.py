@@ -1231,11 +1231,26 @@ class NewBoardScreen(ListScreen):
         super().__init__(ui)
         self.platform = platform
 
+    def _connected(self) -> set:
+        """Board ids of the ESP32 chips esptool identified on connected boards."""
+        from ..hardware import usbids
+        found = set()
+        for device in (self.studio.devices.list() if self.studio.devices else []):
+            board = boards.for_esp_family(usbids.chip_family(device.chip)) if device.chip \
+                else None
+            if board is not None:
+                found.add(board.id)
+        return found
+
     def items(self):
         ui = self.ui
+        connected = self._connected()
+        listed = sorted(boards.for_platform(self.platform), key=lambda b: b.id not in connected)
         out = [Item(b.name, lambda b=b: ui.push(NewFrameworkScreen(ui, b.id)), kind="nav",
-                    subtitle=b.mcu if b.mcu != b.name else None)
-               for b in boards.for_platform(self.platform)]
+                    subtitle="connected now" if b.id in connected else
+                    (b.mcu if b.mcu != b.name else None),
+                    tone="success" if b.id in connected else "")
+               for b in listed]
         out.append(Item("Back", ui.pop, kind="back"))
         return out
 
@@ -1752,7 +1767,9 @@ class FlashConfirmScreen(ListScreen):
                     Item("Cancel", ui.pop, kind="back", select="cancel")]
         failed = {c.id for c in plan.checks if not c.ok and c.level == "error"}
         items = []
-        if "firmware" in failed:
+        if "match" in failed:                 # building for the wrong chip would not help
+            items += self._other_board_items(project)
+        elif "firmware" in failed:
             items.append(Item("Build now", lambda: (ui.pop(), start_build(ui, project, "build")),
                               select="build"))
         if failed & {"device", "match", "port", "permission"}:
@@ -1760,6 +1777,48 @@ class FlashConfirmScreen(ListScreen):
         items.append(Item("Check again", self.enter, select="check"))
         items.append(Item("Back", ui.pop, kind="back"))
         return items
+
+    def _connected_board(self):
+        """The catalogue board of the chip esptool found on the plan's port."""
+        from ..hardware import usbids
+        device = self.studio.devices.get(self.plan.port) if self.studio.devices else None
+        if device is None or not device.chip:
+            return None
+        return boards.for_esp_family(usbids.chip_family(device.chip))
+
+    def _other_board_items(self, project):
+        """The board is a different ESP32 than the project's: offer to switch the
+        project to it (same toolchain) or to start a project for it."""
+        ui = self.ui
+        board = self._connected_board()
+        if board is None or board.id == project.board_id:
+            return []
+        if project.toolchain in board.toolchains and \
+                project.framework in board.frameworks(project.toolchain):
+            return [Item(f"Make it {board.name}", lambda: self._switch(project, board),
+                         select="switch", tone="accent")]
+        tool = boards.TOOLCHAIN_NAMES.get(project.toolchain, project.toolchain)
+        return [Item(f"New {board.name} project", lambda: (ui.home(), ui.push(
+            NewFrameworkScreen(ui, board.id))), kind="nav", subtitle=f"{tool} has no {board.name}")]
+
+    def _switch(self, project, board):
+        ui = self.ui
+        note = (" ESP-IDF makes its sdkconfig again for the new chip (sdkconfig.defaults "
+                "stays)." if project.toolchain == "esp-idf" else "")
+
+        def go():
+            try:
+                updated = self.studio.projects.update(project, board_id=board.id)
+            except Exception as exc:
+                ui.push(ReaderScreen(ui, "Can't change", _err(exc)))
+                return
+            ui.pop()
+            start_build(ui, updated, "rebuild")
+        ui.push(ConfirmScreen(ui, "Flash", f"Make it {board.name}?",
+                              f"The project's board becomes {board.name} (the chip on "
+                              f"{os.path.basename(self.plan.port)}) and mCode builds it again. "
+                              "Flash afterwards." + note, "Change and build", go,
+                              icon="chip"))
 
     def _flash(self):
         plan = self.plan
