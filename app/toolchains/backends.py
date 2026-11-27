@@ -398,9 +398,14 @@ class EspIdfBackend(Backend):
         # the system Python its environment was made with (installer.py).
         # IDF_PY_BUILD_JOBS: idf.py's own limit for ninja's parallel jobs (by
         # default the CPU count + 2, too many for a 1 GB board).
+        # IDF_CCACHE_ENABLE: idf.py compiles through ccache when it is installed
+        # (sudo apt install ccache), so a Rebuild or a new target reuses objects.
         from .installer import clean_path_env
-        return dict(clean_path_env(), IDF_PATH=idf,
-                    IDF_PY_BUILD_JOBS=str(build_jobs(self.settings)))
+        env = dict(clean_path_env(), IDF_PATH=idf,
+                   IDF_PY_BUILD_JOBS=str(build_jobs(self.settings)))
+        if self.tools.get(detect.CCACHE).found:
+            env["IDF_CCACHE_ENABLE"] = "1"
+        return env
 
     def target(self, project: Project) -> str:
         board = project.board
@@ -421,11 +426,19 @@ class EspIdfBackend(Backend):
         idf = self._idf()
         target = self.target(project)
         commands = []
-        if self.configured_target(project) != target:
-            commands.append(["idf.py", "-C", project.path, "set-target", target])
-        if clean:
-            commands.append(["idf.py", "-C", project.path, "fullclean"])
-        commands.append(["idf.py", "-C", project.path, "build"])
+        configured = self.configured_target(project)
+        first = not configured and not os.path.isdir(os.path.join(project.path, "build"))
+        if first:
+            # No sdkconfig yet: give the target to the first configure instead of a
+            # separate set-target, which configures twice (about 9% of a first
+            # build on the dev machine).
+            commands.append(["idf.py", "-C", project.path, f"-DIDF_TARGET={target}", "build"])
+        else:
+            if configured != target:
+                commands.append(["idf.py", "-C", project.path, "set-target", target])
+            if clean:
+                commands.append(["idf.py", "-C", project.path, "fullclean"])
+            commands.append(["idf.py", "-C", project.path, "build"])
         return Plan(f"{'Rebuilding' if clean else 'Building'} {project.name}",
                     [self._shell(idf, project, commands)], project.path, env=self._env(idf),
                     timeout=self.timeout(), labels=["Building with ESP-IDF"])

@@ -91,6 +91,39 @@ class BuildFilesTests(TempCase):
                          "# mine\ndefault_fqbn: esp32:esp32:esp32c3:CDCOnBoot=cdc\n")
 
 
+class FastBuildTests(TempCase):
+    """ESP-IDF's trimmed build (MINIMAL_BUILD), as Espressif's examples use it."""
+
+    def test_new_esp_idf_projects_build_only_what_main_needs(self):
+        studio = self.studio(hardware=False, ai=False)
+        project = studio.projects.create("Fast", "esp32-c5", "esp-idf", "espidf", init_git=False)
+        text = read(os.path.join(project.path, "CMakeLists.txt"))
+        self.assertLess(text.index(buildfiles.MINIMAL_BUILD), text.index("project("))
+        self.assertGreater(text.index(buildfiles.MINIMAL_BUILD), text.index("project.cmake"))
+        self.assertTrue(buildfiles.minimal_build(project.path))
+        setting = {s.id: s for s in studio.boardconfig.settings(project)}["fast_build"]
+        self.assertEqual(setting.value, "1")
+
+    def test_switch_off_and_on_keeps_the_rest_of_the_file(self):
+        path = os.path.join(self.tmp, "CMakeLists.txt")
+        original = ("cmake_minimum_required(VERSION 3.16)\n"
+                    "include($ENV{IDF_PATH}/tools/cmake/project.cmake)\n"
+                    "# my line\nproject(mine)\n")
+        with open(path, "w") as handle:
+            handle.write(original)
+        self.assertFalse(buildfiles.minimal_build(self.tmp))
+        self.assertTrue(buildfiles.set_minimal_build(self.tmp, True))
+        self.assertTrue(buildfiles.minimal_build(self.tmp))
+        self.assertFalse(buildfiles.set_minimal_build(self.tmp, True))      # already on
+        self.assertTrue(buildfiles.set_minimal_build(self.tmp, False))
+        self.assertEqual(read(path), original)
+
+    def test_folder_without_a_project_line_has_no_switch(self):
+        with open(os.path.join(self.tmp, "CMakeLists.txt"), "w") as handle:
+            handle.write("cmake_minimum_required(VERSION 3.16)\n")
+        self.assertIsNone(buildfiles.minimal_build(self.tmp))
+
+
 class BoardConfigTests(TempCase):
     def setUp(self):
         super().setUp()

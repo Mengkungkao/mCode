@@ -1697,9 +1697,14 @@ class BuildScreen(JobScreen):
                               tone="accent"))
         report = job.result.get("report") or {}
         if report.get("missing_headers"):
-            items.append(Item("Missing library help", lambda: ui.push(ReaderScreen(
-                ui, "Missing library", MISSING_HELP.format(
-                    ", ".join(report["missing_headers"])))), kind="nav"))
+            idf = project is not None and project.toolchain == "esp-idf"
+            text = (IDF_MISSING_HELP if idf else MISSING_HELP).format(
+                ", ".join(report["missing_headers"]))
+            items.append(Item("Missing header help", lambda: ui.push(ReaderScreen(
+                ui, "Missing header", text)), kind="nav"))
+            if idf:
+                items.append(Item("Board settings", lambda: ui.push(BoardSettingsScreen(
+                    ui, project.id)), kind="nav"))
         items += [Item("View details", lambda: self.details(job), kind="nav"),
                   Item("Back", ui.pop, kind="back")]
         return items
@@ -1717,6 +1722,12 @@ class BuildScreen(JobScreen):
         self.ui.say("working")
         self.ui.replace(AIScreen(self.ui))
 
+
+IDF_MISSING_HELP = ("The code includes {} but that ESP-IDF component is not part of the "
+                    "build.\n\nWith Fast build on, ESP-IDF builds only main and the components "
+                    "main/CMakeLists.txt asks for: add the component to REQUIRES there (for "
+                    "esp_wifi.h: REQUIRES esp_wifi), or ask the AI Engineer to do it. Or turn "
+                    "Fast build off in Board settings (slower builds).")
 
 MISSING_HELP = ("The code includes {} but no installed library provides it.\n\n"
                 "Install the library in the desktop IDE (Libraries), or ask the AI Engineer "

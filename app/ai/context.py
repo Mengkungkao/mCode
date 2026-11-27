@@ -91,6 +91,13 @@ def build_prompt(project: Project, request: str, *, mode: str, kind: str = "chat
         lines.append(f"PlatformIO environment: {project.pio_env}")
     if board and board.notes:
         lines.append(f"Board notes (from mCode's catalogue): {board.notes}")
+    if project.toolchain == "esp-idf":
+        from ..projects import buildfiles
+        if buildfiles.minimal_build(project.path):
+            lines.append("ESP-IDF fast build is on (idf_build_set_property(MINIMAL_BUILD ON) in "
+                         "CMakeLists.txt): only main and the components it lists are built. When "
+                         "the code uses another ESP-IDF component (esp_wifi, nvs_flash, "
+                         "esp_driver_gpio, ...), add it to REQUIRES in main/CMakeLists.txt.")
     lines.append(f"Serial baud rate: {project.baud}")
     if device:
         lines.append(f"Connected board: {device.get('description')} on {device.get('port')} "

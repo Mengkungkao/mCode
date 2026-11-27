@@ -241,7 +241,7 @@ class BoardSettingsApiTests(WebCase):
         pid = data["project"]["id"]
         status, data, _ = self.request("GET", f"/api/project/{pid}/board")
         self.assertEqual(status, 200, data)
-        self.assertEqual([s["id"] for s in data["settings"]], ["board", "upload_speed"])
+        self.assertEqual([s["id"] for s in data["settings"]], ["board", "upload_speed", "fast_build"])
         status, data, _ = self.request("POST", f"/api/project/{pid}/board",
                                        {"id": "board", "value": "esp32-c3"})
         self.assertEqual(status, 200, data)

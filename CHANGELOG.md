@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.1.7] — 2026-11-27
+
+- Faster ESP-IDF builds:
+  - New ESP-IDF projects build only `main` and the components it needs
+    (`idf_build_set_property(MINIMAL_BUILD ON)`, as Espressif's own examples
+    do): the ESP32-C5 starter project needs 571 build steps instead of 1120.
+    *Board settings › Fast build* switches it for any ESP-IDF project. When a
+    header such as `esp_wifi.h` is then missing, the build screen says to add
+    the component to `REQUIRES` in `main/CMakeLists.txt` (Claude is told too).
+  - The first build gives the target to the first configure
+    (`idf.py -DIDF_TARGET=…`) instead of a separate `set-target`.
+  - With ccache installed (`sudo apt install ccache`) ESP-IDF compiles through
+    it (`IDF_CCACHE_ENABLE=1`), so *Rebuild*, a board change or a second
+    project reuse what was compiled. `--diagnose` lists ccache.
+  - Measured on the dev machine (4 jobs, ESP32-C5, ESP-IDF 6.1.1): first build
+    128 s → 60 s; a build after one change 6 s.
+
 ## [0.1.6] — 2026-11-27
 
 - **Board settings** for every project (LCD: Project › Board settings;

@@ -29,7 +29,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Dict, List, Optional
 
 from ..hardware import usbids
-from ..projects import boards
+from ..projects import boards, buildfiles
 from ..projects.model import Project, ProjectError
 from . import detect
 
@@ -116,6 +116,16 @@ class BoardConfig:
             speeds += [Choice(str(s), str(s)) for s in board.upload_speeds]
             out.append(Setting("upload_speed", "Upload speed", str(project.upload_speed or 0),
                                speeds, note="Lower it if uploads fail with long cables."))
+        if project.toolchain == boards.ESP_IDF:
+            minimal = buildfiles.minimal_build(project.path)
+            if minimal is not None:
+                out.append(Setting("fast_build", "Fast build", "1" if minimal else "0",
+                                   kind="toggle",
+                                   note="On: build only main and the components it needs, as "
+                                        "Espressif's examples do (about half the work). If a "
+                                        "header such as esp_wifi.h is not found, add the "
+                                        "component to REQUIRES in main/CMakeLists.txt, or "
+                                        "turn this off."))
         if menus and project.toolchain == boards.ARDUINO_CLI:
             for menu in self.arduino_menus(project):
                 option = menu["option"]
@@ -175,6 +185,11 @@ class BoardConfig:
             return projects.update(project, usb_cdc_on_boot=value == "1")
         if setting_id == "upload_speed":
             return projects.update(project, upload_speed=int(value))
+        if setting_id == "fast_build":
+            if buildfiles.set_minimal_build(project.path, value == "1"):
+                log.info("%s: fast build %s", project.name, "on" if value == "1" else "off")
+                projects.publish("projects", {"updated": project.summary()})
+            return project
         option = setting_id.split(":", 1)[1]
         options = dict(project.board_options)
         default = next((m for m in self.arduino_menus(project) if m["option"] == option), {})

@@ -28,12 +28,13 @@ log = logging.getLogger("mcode.tools")
 
 CLAUDE, ARDUINO_CLI, PLATFORMIO, ESP_IDF, ESPTOOL, MAKE, GIT = (
     "claude", "arduino-cli", "platformio", "esp-idf", "esptool", "make", "git")
-ARECORD, APLAY, ESPEAK, CPPCHECK, CC = "arecord", "aplay", "espeak", "cppcheck", "cc"
+ARECORD, APLAY, ESPEAK, CPPCHECK, CC, CCACHE = (
+    "arecord", "aplay", "espeak", "cppcheck", "cc", "ccache")
 
 NAMES = {CLAUDE: "Claude Code", ARDUINO_CLI: "Arduino CLI", PLATFORMIO: "PlatformIO",
          ESP_IDF: "ESP-IDF", ESPTOOL: "esptool", MAKE: "Make", GIT: "Git",
          ARECORD: "Microphone (arecord)", APLAY: "Speaker (aplay)", ESPEAK: "eSpeak NG",
-         CPPCHECK: "Cppcheck", CC: "C compiler"}
+         CPPCHECK: "Cppcheck", CC: "C compiler", CCACHE: "ccache"}
 INSTALLABLE = (CLAUDE, ARDUINO_CLI, PLATFORMIO, ESPTOOL, ESP_IDF)
 HINTS = {
     CLAUDE: "Install from Settings > Development tools, or: curl -fsSL https://claude.ai/install.sh | bash",
@@ -50,6 +51,8 @@ HINTS = {
     APLAY: "sudo apt install alsa-utils",
     ESPEAK: "Optional, for spoken feedback without an OpenAI key: sudo apt install espeak-ng",
     CPPCHECK: "Optional static analysis for Arduino sketches: sudo apt install cppcheck",
+    CCACHE: "Optional, makes ESP-IDF rebuilds much faster (after Rebuild, a board change or "
+            "in a second project): sudo apt install ccache",
     CC: "sudo apt install build-essential",
 }
 
@@ -340,6 +343,9 @@ class Toolchains:
 
     def _detect_cppcheck(self) -> Tool:
         return self._simple(CPPCHECK, ["cppcheck"], ["--version"])
+
+    def _detect_ccache(self) -> Tool:
+        return self._simple(CCACHE, ["ccache"], ["--version"])
 
     def _detect_cc(self) -> Tool:
         return self._simple(CC, ["cc", "gcc", "clang"], ["--version"])

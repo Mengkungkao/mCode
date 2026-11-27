@@ -1,7 +1,7 @@
 {
   "id": "mcode",
   "name": "mCode Studio",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "AI embedded development: talk to Claude, build and flash ESP32 and Arduino boards",
   "entrypoint": "run.sh",
   "icon": "assets/icon.png",

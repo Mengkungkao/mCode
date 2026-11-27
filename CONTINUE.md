@@ -98,6 +98,16 @@ contract copies, JS syntax, links, generated configuration doc).
 - Not verified: flashing the C5, Identify chip on the C5 (no esptool on the
   board yet), the LCD screens on the real display.
 
+## Session 2026-11-27 (0.1.7, faster ESP-IDF builds)
+
+- Owner: ESP-IDF builds take too long. 0.1.7: new ESP-IDF projects use
+  `idf_build_set_property(MINIMAL_BUILD ON)` (as Espressif's examples do;
+  Board settings › Fast build toggles it; `buildfiles.set_minimal_build`);
+  first build passes `-DIDF_TARGET` instead of set-target; ccache used when
+  installed (`IDF_CCACHE_ENABLE`). Dev machine, 4 jobs, C5 starter: first
+  build 128 s → 60 s (571 instead of 1120 steps), incremental 6 s.
+- NOT measured on the .130: it was offline (no route) when I tried.
+
 ## Session 2026-11-27 (0.1.6, board settings)
 
 - Owner: an ESP32-C3 would not take an upload "even after changing the

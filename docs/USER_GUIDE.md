@@ -89,7 +89,9 @@ says what is on the port ("ttyACM0: ESP32-C3 (not this board)" after
 with built-in USB, Arduino framework: on = `Serial` prints on the chip's own
 USB port), *Upload speed*, *Port*, and for Arduino CLI projects the board's
 own menus from the installed core (CPU frequency, flash size, partition
-scheme, debug level…). Changes are saved at once and `sketch.yaml` /
+scheme, debug level…). ESP-IDF projects have *Fast build* (on for new
+projects): only `main` and the components it lists in `REQUIRES` are built,
+about half the work. Changes are saved at once and `sketch.yaml` /
 `platformio.ini` follow; build again before flashing (mCode refuses
 firmware built for the old settings). *Erase all flash before upload* is not
 offered: erasing is a separate, confirmed action. The desktop IDE has the

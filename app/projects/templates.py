@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from typing import Dict
 
+from . import buildfiles
 from .boards import ARDUINO_CLI, ESP_IDF, MAKE, PLATFORMIO
 from .model import Project
 
@@ -292,6 +293,7 @@ def files_for(project: Project) -> Dict[str, str]:
     elif project.toolchain == ESP_IDF:
         files["CMakeLists.txt"] = ("cmake_minimum_required(VERSION 3.16)\n"
                                    "include($ENV{IDF_PATH}/tools/cmake/project.cmake)\n"
+                                   + buildfiles.MINIMAL_BUILD_LINES +
                                    f"project({project.slug.replace('-', '_')})\n")
         files["main/CMakeLists.txt"] = 'idf_component_register(SRCS "main.c" INCLUDE_DIRS ".")\n'
         files["main/main.c"] = IDF_MAIN.format(**fmt)

@@ -79,7 +79,8 @@ class BackendCommandTests(TempCase):
         settings = Settings(None)
         tools = Toolchains(settings, os.path.join(self.tmp, "bin"), os.path.join(self.tmp, "venv"),
                            home=self.home)
-        for tool_id in ("arduino-cli", "platformio", "esptool", "make", "esp-idf", "cppcheck", "cc"):
+        for tool_id in ("arduino-cli", "platformio", "esptool", "make", "esp-idf", "cppcheck", "cc",
+                        "ccache"):
             if tool_id in found:
                 tools._tools[tool_id] = Tool(tool_id, tool_id, found[tool_id], found.get(tool_id + "_v", "5.3.1"), "test")
             else:
@@ -146,13 +147,20 @@ class BackendCommandTests(TempCase):
         project = self.project("esp32-c3", "esp-idf", "espidf")
         plan = backend.build(project)
         script = plan.steps[0][2]
-        self.assertIn("set-target esp32c3", script)
+        self.assertIn("-DIDF_TARGET=esp32c3 build", script)    # first build: one configure
+        self.assertNotIn("set-target", script)
         settings.set("dev.build_jobs", 1, save=False)
         self.assertEqual(backend.build(project).env["IDF_PY_BUILD_JOBS"], "1")
         self.assertEqual(plan.env["IDF_PATH"], idf)
         with open(os.path.join(project.path, "sdkconfig"), "w") as handle:
             handle.write('CONFIG_IDF_TARGET="esp32c3"\n')
         self.assertNotIn("set-target", backend.build(project).steps[0][2])
+        project.board_id = "esp32-c5"                   # the board changed: set the target
+        self.assertIn("set-target esp32c5", backend.build(project).steps[0][2])
+        project.board_id = "esp32-c3"
+        self.assertNotIn("IDF_CCACHE_ENABLE", plan.env)  # ccache not installed
+        tools._tools["ccache"] = Tool("ccache", "ccache", "/usr/bin/ccache", "4.5.1", "test")
+        self.assertEqual(backend.build(project).env["IDF_CCACHE_ENABLE"], "1")
         with self.assertRaises(BackendError):
             backend.upload(project, "/dev/ttyUSB0")       # not built yet
         os.makedirs(os.path.join(project.path, "build"))

@@ -14,6 +14,7 @@ sudo.
 | ESP-IDF | yes: the newest stable release tag, `git clone --recursive` from github.com/espressif/esp-idf, then its own `install.sh` and `idf_tools.py install cmake ninja` (about 6 GB: 0.8 GB source, 4.3 GB compilers, 0.7 GB downloads kept by Espressif's tools; 20–60 min or more on a Pi) | `~/esp/v<version>/esp-idf`, compilers and Python environment in `~/.espressif` (Espressif's standard places; outside mCode's data folder, which mFruit OS copies before every update) | ESP-IDF projects |
 | make, gcc | no: `sudo apt install build-essential` | system | Generic C/C++ projects, PlatformIO native tests |
 | cppcheck | no: `sudo apt install cppcheck` | system | static analysis of Arduino sketches |
+| ccache | no: `sudo apt install ccache` | system | faster ESP-IDF rebuilds (used automatically when installed) |
 
 `<data>` is `~/.whisplay-os/apps/mcode/data` under mFruit OS and
 `~/.local/share/mcode` otherwise. `./run.sh cli tools` lists what mCode
