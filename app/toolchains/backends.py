@@ -38,6 +38,14 @@ CORE_NAMES = {"esp32:esp32": "ESP32 core (Espressif)", "arduino:avr": "Arduino A
               "arduino:mbed_rp2040": "Arduino Mbed RP2040 core"}
 
 
+INTERRUPTED = ".mcode-interrupted"
+
+
+def interrupted_marker(build_dir: str) -> str:
+    """Written into a build folder when a build there was cancelled or timed out."""
+    return os.path.join(build_dir, INTERRUPTED)
+
+
 class BackendError(Exception):
     """A user-facing reason an action cannot run; ``fix`` names an action that helps."""
 
@@ -161,6 +169,11 @@ class ArduinoCliBackend(Backend):
 
     def build(self, project: Project, clean: bool = False) -> Plan:
         cli = self.program()
+        # A build that was cancelled or timed out can leave a half-written
+        # core archive (core/core.a) that the Arduino CLI then reuses: every
+        # later build fails with "undefined reference to millis/app_main"
+        # (seen on the .130 board, ESP32-C5, 2026-11-27). Start clean once.
+        clean = clean or os.path.exists(interrupted_marker(self.build_dir(project)))
         argv = [cli, "compile", "--fqbn", self._fqbn(project), "--build-path",
                 self.build_dir(project), "--warnings", self.settings.get("dev.warnings"),
                 "--jobs", str(build_jobs(self.settings))]
@@ -361,7 +374,8 @@ class EspIdfBackend(Backend):
         tool = self.tools.get(detect.ESP_IDF)
         if not tool.found:
             raise BackendError("ESP-IDF is not set up. " + (tool.problem or "") + " " +
-                               detect.HINTS[detect.ESP_IDF])
+                               detect.HINTS[detect.ESP_IDF], fix="install:esp-idf",
+                               fix_label="Install ESP-IDF")
         return tool.path
 
     def _shell(self, idf: str, project: Project, commands: List[List[str]]) -> List[str]:
@@ -370,7 +384,13 @@ class EspIdfBackend(Backend):
         return ["bash", "-c", script]
 
     def _env(self, idf: str) -> Dict[str, str]:
-        return {"IDF_PATH": idf}
+        # Without mCode's own Python environment on PATH, so export.sh picks
+        # the system Python its environment was made with (installer.py).
+        # IDF_PY_BUILD_JOBS: idf.py's own limit for ninja's parallel jobs (by
+        # default the CPU count + 2, too many for a 1 GB board).
+        from .installer import clean_path_env
+        return dict(clean_path_env(), IDF_PATH=idf,
+                    IDF_PY_BUILD_JOBS=str(build_jobs(self.settings)))
 
     def target(self, project: Project) -> str:
         board = project.board
@@ -440,7 +460,7 @@ class EspIdfBackend(Backend):
     def requirements(self, project: Project) -> List[dict]:
         tool = self.tools.get(detect.ESP_IDF)
         if not tool.found:
-            return [{"id": "tool", "label": "ESP-IDF", "fix": "doc:esp-idf"}]
+            return [{"id": "tool", "label": "ESP-IDF", "fix": "install:esp-idf"}]
         return []
 
 

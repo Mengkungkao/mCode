@@ -34,14 +34,14 @@ NAMES = {CLAUDE: "Claude Code", ARDUINO_CLI: "Arduino CLI", PLATFORMIO: "Platfor
          ESP_IDF: "ESP-IDF", ESPTOOL: "esptool", MAKE: "Make", GIT: "Git",
          ARECORD: "Microphone (arecord)", APLAY: "Speaker (aplay)", ESPEAK: "eSpeak NG",
          CPPCHECK: "Cppcheck", CC: "C compiler"}
-INSTALLABLE = (CLAUDE, ARDUINO_CLI, PLATFORMIO, ESPTOOL)
+INSTALLABLE = (CLAUDE, ARDUINO_CLI, PLATFORMIO, ESPTOOL, ESP_IDF)
 HINTS = {
     CLAUDE: "Install from Settings > Development tools, or: curl -fsSL https://claude.ai/install.sh | bash",
     ARDUINO_CLI: "Install from Settings > Development tools (official release, checksum verified).",
     PLATFORMIO: "Install from Settings > Development tools (PlatformIO Core in mCode's own Python "
                 "environment).",
-    ESP_IDF: "See docs/TOOLCHAINS.md: git clone the ESP-IDF release, run install.sh, then set "
-             "the ESP-IDF folder in Settings.",
+    ESP_IDF: "Install from Settings > Development tools (Espressif's release and tools, about "
+             "6 GB), or by hand as in docs/TOOLCHAINS.md and set the ESP-IDF folder in Settings.",
     ESPTOOL: "Comes with the ESP32 Arduino core and with PlatformIO, or install it from "
              "Settings > Development tools.",
     MAKE: "sudo apt install build-essential",

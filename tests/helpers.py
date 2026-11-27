@@ -75,6 +75,11 @@ if args[:1] == ["compile"]:
     build = args[args.index("--build-path") + 1]
     sketch = args[-1]
     name = os.path.basename(sketch.rstrip("/"))
+    if os.environ.get("FAKE_COMPILE_SLOW"):
+        import time
+        os.makedirs(os.path.join(build, "core"), exist_ok=True)
+        open(os.path.join(build, "core", "core.a"), "wb").close()     # half-written
+        time.sleep(float(os.environ["FAKE_COMPILE_SLOW"]))
     if os.environ.get("FAKE_COMPILE_FAIL"):
         print(f"{sketch}/{name}.ino:12:5: error: 'servo' was not declared in this scope")
         print(f"{sketch}/{name}.ino:3:10: fatal error: ServoDriver.h: No such file or directory")

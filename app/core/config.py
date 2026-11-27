@@ -123,7 +123,9 @@ FIELDS: List[Field] = [
           "Where new projects are created. Projects are never deleted with the app."),
     Field("dev.arduino_cli", "path", "", "Arduino CLI program", "Empty: found automatically."),
     Field("dev.platformio", "path", "", "PlatformIO program", "Empty: found automatically."),
-    Field("dev.idf_path", "path", "", "ESP-IDF folder", "Empty: IDF_PATH or ~/esp/esp-idf."),
+    Field("dev.idf_path", "path", "", "ESP-IDF folder",
+          "Empty: IDF_PATH, ~/esp/esp-idf or the newest ~/esp/v*/esp-idf. Installing ESP-IDF "
+          "from Development tools sets it."),
     Field("dev.esptool", "path", "", "esptool program", "Empty: found automatically."),
     Field("dev.python", "path", "", "Python for tools",
           "Python used to create mCode's tool environment (PlatformIO, esptool)."),

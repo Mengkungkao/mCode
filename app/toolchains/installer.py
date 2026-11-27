@@ -16,8 +16,14 @@ never with sudo, and only after the user confirmed it on screen:
 * **Arduino cores** (ESP32, AVR, ...): ``arduino-cli core install`` (see
   backends.ArduinoCliBackend.install_core).
 
-ESP-IDF (2–3 GB) is not installed automatically: docs/TOOLCHAINS.md gives
-the commands.
+* **ESP-IDF**: Espressif's own steps (Get Started, Linux): a shallow
+  ``git clone --recursive`` of the newest stable release tag from
+  github.com/espressif/esp-idf into ``~/esp/v<version>/esp-idf``, then its
+  ``install.sh`` (compilers and its Python environment in ``~/.espressif``)
+  and ``idf_tools.py install cmake ninja``. Those are the standard ESP-IDF
+  places, outside mCode's data folder on purpose: mFruit OS copies the data
+  folder before every update, and ESP-IDF is several GB. A folder that is
+  not mCode's own half-finished download is never deleted or overwritten.
 """
 
 from __future__ import annotations
@@ -29,6 +35,7 @@ import os
 import platform
 import re
 import shutil
+import subprocess
 import tarfile
 import tempfile
 import urllib.error
@@ -40,6 +47,9 @@ from ..core.jobs import Job, JobFailed
 log = logging.getLogger("mcode.installer")
 
 ARDUINO_RELEASES = "https://github.com/arduino/arduino-cli/releases"
+IDF_REPOSITORY = "https://github.com/espressif/esp-idf.git"
+IDF_MIN_FREE = 7 * 1024 ** 3          # 6 GB measured (v6.1.1, all targets, arm64) + headroom
+IDF_PARTIAL = ".mcode-partial"
 CLAUDE_INSTALLER = "https://claude.ai/install.sh"
 USER_AGENT = "mCode-Studio-installer"
 ARCHES = {"aarch64": "Linux_ARM64", "arm64": "Linux_ARM64", "armv7l": "Linux_ARMv7",
@@ -183,6 +193,128 @@ def install_claude_code(job: Job, opener: Callable = _open) -> dict:
     return {"installed": True}
 
 
+# ================================================================ ESP-IDF
+
+def _version_key(tag: str):
+    match = re.fullmatch(r"v(\d+)\.(\d+)(?:\.(\d+))?", tag)
+    return tuple(int(n or 0) for n in match.groups()) if match else None
+
+
+def pick_idf_release(tags, python: tuple) -> str:
+    """The newest stable ESP-IDF tag this Python can run: 6.x needs Python 3.10
+    (tools/detect_python.sh), 5.x runs on 3.9. Pre-releases (-beta, -rc,
+    -dev) are never chosen."""
+    usable = []
+    for tag in tags:
+        key = _version_key(tag)
+        if key is None:
+            continue
+        if key[0] >= 6 and tuple(python[:2]) < (3, 10):
+            continue
+        usable.append((key, tag))
+    if not usable:
+        raise JobFailed("no ESP-IDF release runs on this Python "
+                        f"({'.'.join(map(str, python[:3]))}); ESP-IDF needs Python 3.9 or newer")
+    return max(usable)[1]
+
+
+def _capture(job: Job, argv: list, what: str, env: Optional[dict] = None, cwd: str = "",
+             timeout: float = 120, check: bool = True) -> str:
+    """Run a short command and return its output (stdout and stderr)."""
+    job.check_cancelled()
+    try:
+        result = subprocess.run(argv, cwd=cwd or None, env=dict(os.environ, **(env or {})),
+                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise JobFailed(f"{what} took longer than {int(timeout)} s") from None
+    except OSError as exc:
+        raise JobFailed(f"cannot run {what}: {exc.strerror or exc}") from None
+    if check and result.returncode != 0:
+        tail = (result.stdout or "").strip().splitlines()[-3:]
+        raise JobFailed(f"{what} failed (exit code {result.returncode})"
+                        + (": " + " / ".join(tail) if tail else ""))
+    return result.stdout or ""
+
+
+def idf_release_tags(job: Job) -> list:
+    """Release tags from Espressif's repository (git ls-remote: no API quota)."""
+    out = _capture(job, ["git", "ls-remote", "--tags", "--refs", IDF_REPOSITORY],
+                   "git ls-remote (ESP-IDF releases)", timeout=120)
+    return [line.split("refs/tags/", 1)[1] for line in out.splitlines() if "refs/tags/" in line]
+
+
+def idf_folder(home: str, tag: str) -> str:
+    return os.path.join(home, "esp", tag, "esp-idf")
+
+
+def clean_path_env() -> dict:
+    """PATH without mCode's own Python environment, so ESP-IDF builds its
+    environment from the system Python (as its guide does)."""
+    parts = [p for p in os.environ.get("PATH", "").split(os.pathsep)
+             if p and not os.path.isfile(os.path.join(p, "pyvenv.cfg"))
+             and not os.path.isfile(os.path.join(os.path.dirname(p), "pyvenv.cfg"))]
+    return {"PATH": os.pathsep.join(parts)}
+
+
+def install_esp_idf(job: Job, home: str, tag: str = "", python: str = "python3") -> dict:
+    """Install ESP-IDF the way Espressif's Linux guide does, as the user."""
+    env = clean_path_env()
+    job.set_phase("Checking this computer", 0.0)
+    if not shutil.which("git", path=env["PATH"]):
+        raise JobFailed("git is needed to download ESP-IDF: sudo apt install git")
+    probe = _capture(job, [python, "-c", "import sys, venv, ensurepip; "
+                                         "print('%d.%d.%d' % sys.version_info[:3])"],
+                     "python3 check", env=env, timeout=60, check=False)
+    last = probe.strip().splitlines()[-1] if probe.strip() else ""
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", last)
+    version = tuple(int(n) for n in match.groups()) if match else ()
+    if not version:
+        raise JobFailed("ESP-IDF needs Python 3 with venv: sudo apt install python3-venv")
+    os.makedirs(os.path.join(home, "esp"), exist_ok=True)
+    free = shutil.disk_usage(os.path.join(home, "esp")).free
+    if free < IDF_MIN_FREE:
+        raise JobFailed(f"ESP-IDF needs about {IDF_MIN_FREE // 1024 ** 3} GB of free space; "
+                        f"{free / 1024 ** 3:.1f} GB is free in {home}")
+    if not tag:
+        job.set_phase("Finding the newest ESP-IDF release", 0.02)
+        tag = pick_idf_release(idf_release_tags(job), version)
+    if _version_key(tag) is None:
+        raise JobFailed(f"{tag!r} is not an ESP-IDF release tag")
+    folder = idf_folder(home, tag)
+    job.say(f"ESP-IDF {tag} into {folder} (Python {'.'.join(map(str, version))})")
+    if os.path.isfile(os.path.join(folder, "tools", "idf.py")):
+        job.say("the ESP-IDF source is already there: installing its tools only")
+    elif os.path.exists(folder):
+        raise JobFailed(f"{folder} exists but is not a complete ESP-IDF; mCode does not change "
+                        "folders it did not make. Move it away, then try again.")
+    else:
+        partial = folder + IDF_PARTIAL
+        if os.path.exists(partial):
+            job.say(f"removing an unfinished download from an earlier attempt: {partial}")
+            shutil.rmtree(partial)
+        job.set_phase(f"Downloading ESP-IDF {tag} (git, about 1 GB)", 0.05)
+        job.run(["git", "clone", "--progress", "--branch", tag, "--depth", "1", "--recursive",
+                 "--shallow-submodules", "--jobs", "4", IDF_REPOSITORY, partial],
+                env=env, timeout=4 * 3600, what="git clone (ESP-IDF)")
+        if not os.path.isfile(os.path.join(partial, "tools", "idf.py")):
+            raise JobFailed("the download finished but has no tools/idf.py")
+        os.replace(partial, folder)
+    job.set_phase("Installing compilers and Python packages (install.sh)", 0.5)
+    job.run(["bash", os.path.join(folder, "install.sh"), "all"], cwd=folder,
+            env=dict(env, IDF_PATH=folder), timeout=4 * 3600, what="ESP-IDF install.sh")
+    job.set_phase("Installing CMake and Ninja (idf_tools.py)", 0.9)
+    job.run([python, os.path.join(folder, "tools", "idf_tools.py"), "install", "cmake", "ninja"],
+            cwd=folder, env=dict(env, IDF_PATH=folder), timeout=3600,
+            what="idf_tools.py install cmake ninja")
+    job.set_phase("Checking idf.py", 0.97)
+    out = _capture(job, ["bash", "-c", '. "$IDF_PATH/export.sh" >/dev/null 2>&1 && '
+                                       'idf.py --version'],
+                   "idf.py --version", cwd=folder, env=dict(env, IDF_PATH=folder), timeout=600)
+    job.say(out.strip().splitlines()[-1] if out.strip() else "idf.py answered")
+    return {"version": tag.lstrip("v"), "path": folder}
+
+
 def explain_install(tool_id: str) -> Optional[dict]:
     """What an install will do, shown before the user confirms."""
     return {
@@ -195,6 +327,11 @@ def explain_install(tool_id: str) -> Optional[dict]:
         "esptool": {"title": "Install esptool",
                     "body": "Installs Espressif's esptool from PyPI into mCode's own Python "
                             "environment."},
+        "esp-idf": {"title": "Install ESP-IDF",
+                    "body": "Downloads the newest stable ESP-IDF from Espressif's GitHub and its "
+                            "compilers and Python packages from Espressif, as Espressif's Linux "
+                            "guide does, into ~/esp and ~/.espressif. Needs about 6 GB of disk "
+                            "and takes 20 to 60 minutes or more on a Raspberry Pi. No sudo."},
         "claude": {"title": "Install Claude Code",
                    "body": "Runs Anthropic's official installer (claude.ai/install.sh). It "
                            "installs into ~/.local and needs about 200 MB. You then sign in with "

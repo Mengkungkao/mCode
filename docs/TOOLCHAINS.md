@@ -11,7 +11,7 @@ sudo.
 | Arduino cores | yes: `arduino-cli core install` from the official index | `~/.arduino15` (shared with the Arduino IDE) | the board definitions and compilers |
 | PlatformIO Core | yes: `pip install platformio` from PyPI into mCode's own venv | `<data>/tools/venv` (platforms and toolchains in `~/.platformio`) | PlatformIO projects, `pio test`, `pio check` |
 | esptool | yes: from PyPI into the same venv; the Arduino ESP32 core also ships one | `<data>/tools/venv/bin/esptool` | chip detection, erase, ESP-IDF flashing |
-| ESP-IDF | no (2–3 GB): see below | `~/esp/esp-idf` or Settings › ESP-IDF folder | ESP-IDF projects |
+| ESP-IDF | yes: the newest stable release tag, `git clone --recursive` from github.com/espressif/esp-idf, then its own `install.sh` and `idf_tools.py install cmake ninja` (about 6 GB: 0.8 GB source, 4.3 GB compilers, 0.7 GB downloads kept by Espressif's tools; 20–60 min or more on a Pi) | `~/esp/v<version>/esp-idf`, compilers and Python environment in `~/.espressif` (Espressif's standard places; outside mCode's data folder, which mFruit OS copies before every update) | ESP-IDF projects |
 | make, gcc | no: `sudo apt install build-essential` | system | Generic C/C++ projects, PlatformIO native tests |
 | cppcheck | no: `sudo apt install cppcheck` | system | static analysis of Arduino sketches |
 
@@ -42,12 +42,27 @@ git clone -b v6.1.1 --recursive --depth 1 https://github.com/espressif/esp-idf.g
 # then Settings > ESP-IDF folder = ~/esp/esp-idf (or export IDF_PATH)
 ```
 
+mCode's installer (Settings › Development tools › ESP-IDF) runs these same
+steps for you: it picks the newest stable tag (`git ls-remote`, no GitHub
+API), or the newest 5.x on Python 3.9 (ESP-IDF 6 needs Python 3.10), checks
+for about 7 GB of free space, downloads into `~/esp/v<tag>/esp-idf` through
+a temporary `esp-idf.mcode-partial` folder (an unfinished download never
+looks like a real ESP-IDF, and the next attempt removes it), and never
+changes an ESP-IDF folder it did not make. It needs `git` and
+`python3-venv`; nothing needs sudo, because CMake and Ninja come from
+Espressif's tools.
+
 v6.1.1 was the newest stable tag on 2026-11-27. If Espressif's
 [Get Started guide](https://docs.espressif.com/projects/esp-idf/) gives
 different installation steps for your release, follow it; mCode needs a
 folder with `tools/idf.py` and `export.sh`, and the tools installed by
-`install.sh`. mCode's ESP-IDF support (set-target, build, fullclean,
-flash with `flash_args`) has **not** been run against a real ESP-IDF yet.
+`install.sh`.
+
+Checked on 2026-11-27 on the dev machine (Jetson, aarch64, Python 3.12):
+mCode's installer put ESP-IDF v6.1.1 in place (0.8 GB source, 5.1 GB in
+`~/.espressif`), and mCode's ESP-IDF projects built with it for the
+ESP32-C5 (RISC-V, 122 s) and the ESP32-S3 (Xtensa, 110 s). Flashing with
+`idf.py flash` has **not** been run on a board yet.
 
 ## Boards
 

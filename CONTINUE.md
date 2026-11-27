@@ -98,6 +98,24 @@ contract copies, JS syntax, links, generated configuration doc).
 - Not verified: flashing the C5, Identify chip on the C5 (no esptool on the
   board yet), the LCD screens on the real display.
 
+## Session 2026-11-27 (0.1.3, ESP-IDF installer)
+
+- Owner: ESP-IDF could not be installed on the dev machine or the device.
+  mCode had no installer for it (docs only). 0.1.3: Settings › Development
+  tools › ESP-IDF › Install (`installer.install_esp_idf`): newest stable tag
+  by `git ls-remote` (5.x on Python 3.9), shallow recursive clone through
+  `esp-idf.mcode-partial` into `~/esp/v<tag>/esp-idf`, Espressif's
+  `install.sh all`, `idf_tools.py install cmake ninja`, `idf.py --version`;
+  sets `dev.idf_path`. Never touches a folder it did not make. Builds run
+  without mCode's venv on PATH and with `IDF_PY_BUILD_JOBS`.
+- Dev machine: installed v6.1.1 through mCode (5.9 GB); real builds for
+  ESP32-C5 (122 s) and ESP32-S3 (110 s) succeeded.
+- Board (.130): the earlier ESP32-C5 Arduino build failures ("undefined
+  reference to millis/app_main") came from a build cancelled after 130 s
+  that left a partial core.a (Arduino core 4.0.0). Fixed: an interrupted
+  Arduino CLI build makes the next one use `--clean`
+  (`test_build_after_a_cancelled_one_starts_clean`, negative control done).
+
 ## Session 2026-11-27 (0.1.2, sign-in from a phone)
 
 - Problem (owner): on the device, Claude's long sign-in code had to be typed

@@ -7,6 +7,7 @@ import io
 import json
 import os
 import tarfile
+import time
 import unittest
 
 from app.core.config import Settings
@@ -143,8 +144,12 @@ class BackendCommandTests(TempCase):
         tools, settings = self.tools(**{"esp-idf": idf, "esptool": "/x/esptool"})
         backend = backends.EspIdfBackend(tools, settings)
         project = self.project("esp32-c3", "esp-idf", "espidf")
-        script = backend.build(project).steps[0][2]
+        plan = backend.build(project)
+        script = plan.steps[0][2]
         self.assertIn("set-target esp32c3", script)
+        settings.set("dev.build_jobs", 1, save=False)
+        self.assertEqual(backend.build(project).env["IDF_PY_BUILD_JOBS"], "1")
+        self.assertEqual(plan.env["IDF_PATH"], idf)
         with open(os.path.join(project.path, "sdkconfig"), "w") as handle:
             handle.write('CONFIG_IDF_TARGET="esp32c3"\n')
         self.assertNotIn("set-target", backend.build(project).steps[0][2])
@@ -247,6 +252,137 @@ class InstallerTests(TempCase):
         self.assertFalse(os.path.exists(path))
 
 
+FAKE_GIT = r"""#!/usr/bin/env python3
+import os, sys
+log = os.environ.get("FAKE_TOOL_LOG")
+if log:
+    with open(log, "a") as handle:
+        handle.write("git " + " ".join(sys.argv[1:]) + "\n")
+if sys.argv[1] == "ls-remote":
+    for tag in ("v5.5.2", "v6.1.1", "v6.2-beta1", "v6.1"):
+        print(f"0123456789abcdef0123456789abcdef01234567\trefs/tags/{tag}")
+    sys.exit(0)
+if sys.argv[1] == "clone":
+    if os.environ.get("FAKE_GIT_FAIL"):
+        os.makedirs(sys.argv[-1], exist_ok=True)
+        print("fatal: the remote end hung up unexpectedly", file=sys.stderr)
+        sys.exit(128)
+    dest = sys.argv[-1]
+    os.makedirs(os.path.join(dest, "tools", "cmake"))
+    open(os.path.join(dest, "tools", "idf.py"), "w").close()
+    with open(os.path.join(dest, "tools", "cmake", "version.cmake"), "w") as handle:
+        handle.write("set(IDF_VERSION_MAJOR 6)\nset(IDF_VERSION_MINOR 1)\nset(IDF_VERSION_PATCH 1)\n")
+    with open(os.path.join(dest, "install.sh"), "w") as handle:
+        handle.write('echo "install.sh $*" >> "$FAKE_TOOL_LOG"\n'
+                     'mkdir -p "$HOME/.espressif/python_env/idf6.1_py3_env"\n')
+    with open(os.path.join(dest, "tools", "idf_tools.py"), "w") as handle:
+        handle.write("import os, sys\nopen(os.environ['FAKE_TOOL_LOG'], 'a').write("
+                     "'idf_tools ' + ' '.join(sys.argv[1:]) + '\\n')\n")
+    with open(os.path.join(dest, "export.sh"), "w") as handle:
+        handle.write('idf.py() { echo "ESP-IDF v6.1.1"; }\n')
+    sys.exit(0)
+sys.exit(1)
+"""
+
+
+class EspIdfInstallerTests(TempCase):
+    def setUp(self):
+        super().setUp()
+        bin_dir = os.path.join(self.tmp, "fakebin")
+        write_script(os.path.join(bin_dir, "git"), FAKE_GIT)
+        self.log = os.path.join(self.tmp, "tool.log")
+        open(self.log, "w").close()
+        from unittest import mock
+        patcher = mock.patch.dict(os.environ, {
+            "PATH": bin_dir + os.pathsep + os.environ.get("PATH", ""),
+            "FAKE_TOOL_LOG": self.log, "HOME": self.home})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        free = mock.patch.object(installer, "IDF_MIN_FREE", 0)
+        free.start()
+        self.addCleanup(free.stop)
+
+    def install(self, **kwargs):
+        manager = JobManager(os.path.join(self.tmp, "jobs"))
+        self.addCleanup(manager.shutdown, 1)
+        job = manager.submit(JobSpec("install", "t", func=lambda j: installer.install_esp_idf(
+            j, self.home, **kwargs), lane="install"))
+        manager.wait(job.id, 60)
+        return job
+
+    def calls(self):
+        with open(self.log) as handle:
+            return handle.read()
+
+    def test_newest_stable_release_into_the_standard_place(self):
+        job = self.install()
+        self.assertTrue(job.ok, job.error)
+        folder = os.path.join(self.home, "esp", "v6.1.1", "esp-idf")
+        self.assertEqual(job.result, {"version": "6.1.1", "path": folder})
+        calls = self.calls()
+        self.assertIn("git clone --progress --branch v6.1.1 --depth 1 --recursive", calls)
+        self.assertIn("install.sh all", calls)
+        self.assertIn("idf_tools install cmake ninja", calls)
+        self.assertFalse(os.path.exists(folder + installer.IDF_PARTIAL))
+        tools = Toolchains(Settings(None), os.path.join(self.tmp, "b"), os.path.join(self.tmp, "v"),
+                           home=self.home)
+        tool = tools.get("esp-idf", refresh=True)
+        self.assertTrue(tool.found, tool.problem)
+        self.assertEqual(tool.version, "6.1.1")
+
+    def test_failed_download_leaves_no_esp_idf_folder_and_a_retry_cleans_up(self):
+        os.environ["FAKE_GIT_FAIL"] = "1"
+        job = self.install()
+        self.assertFalse(job.ok)
+        folder = os.path.join(self.home, "esp", "v6.1.1", "esp-idf")
+        self.assertFalse(os.path.exists(folder))
+        self.assertTrue(os.path.exists(folder + installer.IDF_PARTIAL))
+        del os.environ["FAKE_GIT_FAIL"]
+        job = self.install()
+        self.assertTrue(job.ok, job.error)
+        self.assertFalse(os.path.exists(folder + installer.IDF_PARTIAL))
+
+    def test_existing_checkout_only_gets_its_tools(self):
+        self.assertTrue(self.install().ok)
+        open(self.log, "w").close()
+        job = self.install(tag="v6.1.1")
+        self.assertTrue(job.ok, job.error)
+        self.assertNotIn("git clone", self.calls())
+        self.assertIn("install.sh all", self.calls())
+
+    def test_a_folder_mcode_did_not_make_is_never_touched(self):
+        folder = os.path.join(self.home, "esp", "v6.1.1", "esp-idf")
+        os.makedirs(folder)
+        mine = os.path.join(folder, "notes.txt")
+        with open(mine, "w") as handle:
+            handle.write("keep")
+        job = self.install(tag="v6.1.1")
+        self.assertFalse(job.ok)
+        self.assertIn("does not change folders it did not make", job.error)
+        self.assertTrue(os.path.exists(mine))
+
+    def test_not_enough_disk_space(self):
+        from unittest import mock
+        with mock.patch.object(installer, "IDF_MIN_FREE", 1 << 62):
+            job = self.install()
+        self.assertFalse(job.ok)
+        self.assertIn("free space", job.error)
+        self.assertNotIn("git clone", self.calls())
+
+    def test_release_choice_follows_python(self):
+        tags = ["v5.5.2", "v6.1.1", "v6.2-beta1", "v6.1", "v4.4.8", "release/v6.1"]
+        self.assertEqual(installer.pick_idf_release(tags, (3, 10, 12)), "v6.1.1")
+        self.assertEqual(installer.pick_idf_release(tags, (3, 9, 2)), "v5.5.2")
+
+    def test_mcode_python_environment_is_kept_off_the_path(self):
+        venv = os.path.join(self.tmp, "venv")
+        os.makedirs(os.path.join(venv, "bin"))
+        open(os.path.join(venv, "pyvenv.cfg"), "w").close()
+        os.environ["PATH"] = os.path.join(venv, "bin") + os.pathsep + os.environ["PATH"]
+        self.assertNotIn(os.path.join(venv, "bin"),
+                         installer.clean_path_env()["PATH"].split(os.pathsep))
+
+
 class BuildServiceTests(TempCase):
     def setUp(self):
         super().setUp()
@@ -263,6 +399,44 @@ class BuildServiceTests(TempCase):
         studio.settings.set("dev.arduino_cli", self.cli, save=False)
         studio.tools.refresh(wait=True, only=["arduino-cli"])
         return studio
+
+    def test_build_after_a_cancelled_one_starts_clean(self):
+        """2026-11-27, .130 board: a cancelled ESP32-C5 build left a partial core.a and
+        every later build failed with "undefined reference to millis/app_main"."""
+        import json
+        studio = self.studio_with_cli()
+        project = studio.projects.create("Blink", "esp32-c5", "arduino-cli", init_git=False)
+        os.environ["FAKE_COMPILE_SLOW"] = "20"
+        self.addCleanup(os.environ.pop, "FAKE_COMPILE_SLOW", None)
+        job = studio.builds.run(project, "build")
+        deadline = time.time() + 10
+        while not os.path.exists(os.path.join(project.path, ".mcode", "build", "core", "core.a")) \
+                and time.time() < deadline:
+            time.sleep(0.05)                       # the compiler is running
+        studio.jobs.cancel(job.id)
+        studio.jobs.wait(job.id, 10)
+        self.assertEqual(job.state, "cancelled")
+        marker = os.path.join(project.path, ".mcode", "build", ".mcode-interrupted")
+        deadline = time.time() + 5
+        while not os.path.exists(marker) and time.time() < deadline:
+            time.sleep(0.02)                       # written by the job's done callback
+        self.assertTrue(os.path.exists(marker))
+        del os.environ["FAKE_COMPILE_SLOW"]
+
+        def compile_args():
+            with open(self.log) as handle:
+                return [json.loads(line) for line in handle if '"compile"' in line][-1]
+        job = studio.builds.run(project, "build")
+        studio.jobs.wait(job.id, 30)
+        self.assertTrue(job.ok, job.error)
+        self.assertIn("--clean", compile_args())
+        deadline = time.time() + 5
+        while os.path.exists(marker) and time.time() < deadline:
+            time.sleep(0.02)
+        self.assertFalse(os.path.exists(marker))
+        job = studio.builds.run(project, "build")
+        studio.jobs.wait(job.id, 30)
+        self.assertNotIn("--clean", compile_args())
 
     def test_build_records_sizes_and_artifact(self):
         studio = self.studio_with_cli()

@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.1.3] — 2026-11-27
+
+- ESP-IDF can be installed from Settings › Development tools (LCD and desktop
+  IDE), and a build that needs it offers the install: the newest stable
+  release from Espressif's GitHub with its own `install.sh`, CMake and Ninja,
+  into `~/esp/v<version>/esp-idf` and `~/.espressif`, as the user (no sudo).
+  It checks git, Python venv and about 7 GB of free space first, and never
+  changes an ESP-IDF folder it did not make.
+- ESP-IDF builds run without mCode's own Python environment on PATH and with
+  the same parallel-job limit as other builds (`dev.build_jobs`; 1 on boards
+  with less than 1.1 GB, where ninja's default of CPUs + 2 can run out of
+  memory). Checked: real ESP-IDF v6.1.1 builds for ESP32-C5 and ESP32-S3.
+- Fix: after an Arduino CLI build was cancelled or timed out, every later
+  build of that project failed with "undefined reference to `millis`" /
+  "`app_main`": the Arduino CLI reused the half-written core archive. The
+  next build after an interrupted one now starts clean (`--clean`).
+
 ## [0.1.2] — 2026-11-27
 
 - Claude sign-in on the device in two steps, each a QR code for the phone:

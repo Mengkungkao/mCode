@@ -40,7 +40,7 @@ project, chosen board per project, identified chips), `.env` (optional
 | `dev.projects_dir` | `"~/mcode-projects"` | path |  | Project folder. Where new projects are created. Projects are never deleted with the app. |
 | `dev.arduino_cli` | empty | path |  | Arduino CLI program. Empty: found automatically. |
 | `dev.platformio` | empty | path |  | PlatformIO program. Empty: found automatically. |
-| `dev.idf_path` | empty | path |  | ESP-IDF folder. Empty: IDF_PATH or ~/esp/esp-idf. |
+| `dev.idf_path` | empty | path |  | ESP-IDF folder. Empty: IDF_PATH, ~/esp/esp-idf or the newest ~/esp/v*/esp-idf. Installing ESP-IDF from Development tools sets it. |
 | `dev.esptool` | empty | path |  | esptool program. Empty: found automatically. |
 | `dev.python` | empty | path |  | Python for tools. Python used to create mCode's tool environment (PlatformIO, esptool). |
 | `dev.build_jobs` | `0` | 0–64 |  | Compiler jobs. 0: automatic (1 on boards under 1 GB). |

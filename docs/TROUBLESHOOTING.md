@@ -20,6 +20,8 @@ login, boards, audio and permissions. mCode's log under mFruit OS is
 | **Build: "Arduino CLI / PlatformIO is not installed"** | Settings › Development tools › Install. |
 | **Build: "ESP32 core (Espressif) is needed first"** | Install the core when mCode offers it (several hundred MB). |
 | **Build failed: "Missing library: X"** | Desktop IDE › Libraries › search and install, or ask the AI which library provides the header. |
+| **Build: "undefined reference to `millis`" / "`app_main`" / "`digitalWrite`"** (Arduino) | An earlier build was stopped part-way and left a half-built core. 0.1.3 and later start the next build clean by themselves; on older versions use *Rebuild* (or delete the project's `.mcode/build` folder). |
+| **ESP-IDF install fails** | The job log (Build output / `<data>/logs/jobs/`) names the step. "needs Python 3 with venv": `sudo apt install python3-venv`. "free space": ESP-IDF needs about 7 GB free while installing. A network failure leaves only `~/esp/v<version>/esp-idf.mcode-partial`, which the next attempt removes; install again. |
 | **First PlatformIO build is slow** | PlatformIO downloads the platform and compiler on first use (hundreds of MB for ESP32). Later builds are faster. |
 | **Flash: "Build the project first" / "The source changed"** | Build again: mCode only flashes the firmware it checked. |
 | **Flash: "is an Arduino Uno (by its USB ID), but the project is for ESP32-S3"** | Wrong board or port: choose the right one in Connect Board, or change the project's board. |

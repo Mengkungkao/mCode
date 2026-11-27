@@ -18,7 +18,7 @@ import threading
 from typing import Callable, Dict, Optional
 
 from ..core.history import History
-from ..core.jobs import Job, JobFailed, JobManager, JobSpec
+from ..core.jobs import CANCELLED, SUCCEEDED, TIMEOUT, Job, JobFailed, JobManager, JobSpec
 from ..projects.model import Project
 from . import backends, detect, diagnostics, installer
 from .backends import BackendError
@@ -126,6 +126,7 @@ class BuildService:
         return result
 
     def _done(self, job: Job, project: Project, action: str, source: str) -> None:
+        self._note_interruption(job, project, action)
         report = job.result.get("report") or {}
         record = {"project_id": project.id, "project": project.name, "action": action,
                   "state": job.state, "elapsed": round(job.elapsed, 1), "job": job.id,
@@ -142,6 +143,23 @@ class BuildService:
         if action != "clean":
             self.history.add("build", **record)
         self.publish("build", record)
+
+    def _note_interruption(self, job: Job, project: Project, action: str) -> None:
+        """An Arduino CLI build that was stopped part-way makes the next one start
+        clean (backends.ArduinoCliBackend.build); a finished one clears that."""
+        if action not in ("build", "rebuild") or project.toolchain != backends.ARDUINO_CLI:
+            return
+        marker = backends.interrupted_marker(os.path.join(project.path, backends.BUILD_DIR))
+        try:
+            if job.state in (CANCELLED, TIMEOUT):
+                os.makedirs(os.path.dirname(marker), exist_ok=True)
+                with open(marker, "w") as handle:
+                    handle.write(f"{job.state} {job.id}\n")
+                log.info("%s: build %s; the next build starts clean", project.name, job.state)
+            elif job.state == SUCCEEDED and os.path.exists(marker):
+                os.unlink(marker)
+        except OSError as exc:
+            log.warning("%s: could not record the interrupted build: %s", project.name, exc)
 
     def last(self, project_id: str) -> Optional[dict]:
         with self._lock:
@@ -173,6 +191,11 @@ class BuildService:
             elif tool_id == detect.ESPTOOL:
                 result = installer.install_pip_package(job, paths.venv, "esptool",
                                                        self.settings.get("dev.python"))
+            elif tool_id == detect.ESP_IDF:
+                result = installer.install_esp_idf(job, self.tools.home,
+                                                   python=self.settings.get("dev.python")
+                                                   or "python3")
+                self.settings.set("dev.idf_path", result["path"])
             else:
                 result = installer.install_claude_code(job)
             self.tools.refresh(wait=True, only=[tool_id])
@@ -186,7 +209,8 @@ class BuildService:
 
         info = installer.explain_install(tool_id) or {"title": f"Install {tool_id}"}
         return self.jobs.submit(JobSpec(kind="install", title=info["title"], func=work,
-                                        lane="install", timeout=3600,
+                                        lane="install",
+                                        timeout=6 * 3600 if tool_id == detect.ESP_IDF else 3600,
                                         on_done=lambda job: self.publish("tools.installed",
                                                                          job.to_dict()),
                                         meta={"tool": tool_id}))
