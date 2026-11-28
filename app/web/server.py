@@ -323,6 +323,8 @@ def _make_handler(server: WebServer):
         server_version = "mCode"
         web = server
         session = None
+        _parsed_body = None             # this request's JSON body, once read
+        _body_read = True               # False while a request's body is unread
 
         @property
         def timeout(self):                     # read by StreamRequestHandler.setup()
@@ -377,6 +379,11 @@ def _make_handler(server: WebServer):
 
         def _send(self, status: int, body: bytes, ctype: str, headers: Optional[dict] = None):
             headers = dict(headers or {})
+            if not self._body_read and int(self.headers.get("Content-Length") or 0) > 0:
+                # Answered without reading the request's body (refused early): the body
+                # would be taken for the next request on this connection, so close it.
+                self.close_connection = True
+                headers["Connection"] = "close"
             pending = getattr(self, "_pending_cookie", None)
             if pending and "Set-Cookie" not in headers:
                 headers["Set-Cookie"] = pending
@@ -407,12 +414,15 @@ def _make_handler(server: WebServer):
             self._json({"error": message, "fix": fix}, status)
 
         def _body(self) -> dict:
-            if hasattr(self, "_parsed_body"):
+            # One handler object serves every request of a kept-alive connection:
+            # _dispatch clears this cache for each request.
+            if self._parsed_body is not None:
                 return self._parsed_body
             length = int(self.headers.get("Content-Length") or 0)
             if length > MAX_BODY:
                 raise ApiError(413, "Request too large.")
             raw = self.rfile.read(length) if length else b""
+            self._body_read = True
             data = {}
             if raw:
                 try:
@@ -442,6 +452,8 @@ def _make_handler(server: WebServer):
 
         def _dispatch(self, method: str):
             self._pending_cookie = None
+            self._parsed_body = None
+            self._body_read = False
             if not self._host_ok():
                 self._send(403, b"Unknown host name", "text/plain")
                 return
@@ -931,6 +943,7 @@ def route(method: str, path: str, q: dict, handler):
         sub = parts[2] if len(parts) > 2 else ""
         if sub == "conversation":
             return {"conversation": ai.conversation(p), "review": ai.review(p),
+                    "context": ai.context_of(p),
                     "turn": ai.turn.to_dict() if ai.turn else None}
         if sub == "ask":
             kind = body.get("kind", "chat")
@@ -1080,6 +1093,7 @@ def _import_zip(studio, handler) -> dict:
     if length <= 0 or length > MAX_ZIP:
         raise ApiError(413, "The zip file is empty or larger than 64 MB.")
     data = handler.rfile.read(length)
+    handler._body_read = True
     name = os.path.splitext(os.path.basename(handler.headers.get("X-Filename") or "import.zip"))[0]
     from ..projects.model import slugify
     root = studio.projects.ensure_root()

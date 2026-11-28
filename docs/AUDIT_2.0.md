@@ -46,6 +46,8 @@ without the fix (negative control done) once fixed.
 | A-16 | Medium (security) | `web/server.py`, `projects/manager.py` | Every paired browser has full device-user access |
 | A-17 | Low (security) | `web/server.py` | `Origin` is not checked; unexpected errors return exception text |
 | A-18 | Medium | `web/server.py` | Importing a zip file never worked |
+| A-19 | High (regression in 0.2.0) | `web/server.py` | A second POST on a kept-alive connection gets the first one's body |
+| A-20 | Low | `web/server.py` | A POST refused before its body is read corrupts the next request on the connection |
 
 ### A-01 Opening a project runs commands from its `.git/config`
 
@@ -251,6 +253,38 @@ without the fix (negative control done) once fixed.
   "Invalid JSON." No test covered it.
 * **Fix:** the zip route reads its own body; the access check skips it too.
 * **Regression test:** `test_web.ZipImportTests` (negative control done).
+
+### A-19 A second POST on a kept-alive connection gets the first one's body
+
+* **Found 2026-11-28 (0.3.0 work)** in a browser check: sending a request
+  to Claude right after switching the mode answered "Say or type what you
+  want Claude to do." although the text was sent (the request body was
+  seen in the browser's network log).
+* **Root cause:** 0.2.0 caches the parsed JSON body on the request handler
+  (`_parsed_body`, so the access check and the route read it once). One
+  handler object serves every request of an HTTP/1.1 kept-alive connection,
+  and the cache was never cleared: every later POST on the connection got
+  the first POST's body, and its own body stayed unread in the stream.
+  Browsers reuse connections, so this hit any second action within the
+  idle time-out (settings, AI requests, approvals, serial input).
+* **Fix:** `_dispatch` clears the cache for every request.
+* **Regression test:**
+  `test_web.ConnectionTests.test_each_request_on_a_kept_alive_connection_has_its_own_body`
+  (two settings POSTs on one connection; failed with `15 != 17` before the
+  fix, negative control done).
+* **Verification:** SOFTWARE TESTED; headless Chromium (mode change, then
+  send) on the dev machine.
+
+### A-20 A POST refused before its body is read corrupts the next request
+
+* **Root cause:** answers sent before the body is read (missing `X-mCode`
+  header, wrong `Origin`, not paired, unknown host) left the body in the
+  stream, where it was read as the start of the next request on the
+  connection (present since 0.1.x).
+* **Fix:** such answers close the connection (`Connection: close`).
+* **Regression test:**
+  `test_web.ConnectionTests.test_a_refused_post_does_not_leave_its_body_on_the_connection`
+  (negative control done).
 
 ## Suspected risks (not reproduced)
 

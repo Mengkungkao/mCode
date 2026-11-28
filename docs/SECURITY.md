@@ -8,25 +8,29 @@ them is in [Security audit 2.0](SECURITY_AUDIT_2.0.md).
 
 | Risk | Protection | Where |
 |---|---|---|
-| Claude changes files outside the project | Claude Code `--restricted` confines file tools to the working folder; in Ask mode that folder is a staging copy | `app/ai/service.py` |
-| Claude runs arbitrary commands | no shell in any mode (since 0.2.0 Advanced mode's git is mCode's own `git_*` tools, not `Bash`); anything not allowed is refused (`--permission-prompts none`) | `app/ai/service.py`, `app/ai/bridge.py` |
+| Claude changes files outside the project | Claude Code `--restricted` confines file tools to the working folder; in Manual and Plan mode that folder is a staging copy, and Plan mode has no editing tool | `app/ai/service.py` |
+| Claude runs arbitrary commands | no shell in any mode (since 0.2.0 the Auto + git mode's git is mCode's own `git_*` tools, not `Bash`); anything not allowed is refused (`--permission-prompts none`) | `app/ai/service.py`, `app/ai/bridge.py` |
+| A model name smuggles an option into Claude Code's command line | `ai.model` must be an alias or a model id (letters, digits, `.` `_` `-` `:` `/` `@` `[` `]`; never starting with `-`) | `app/core/config.py` |
 | Claude flashes or erases a board, changes fuses, installs software | no such tool exists; builds and tests go through mCode's job runner | `app/ai/bridge.py` |
 | Risky edits slip through | partition, bootloader, flash/fuse, dependency and git-attribute changes, and build scripts (`CMakeLists.txt`, Makefiles, `*.cmake`, `*.mk`, Python and shell scripts; `ai.hold_build_scripts`) are held for an explicit decision in every mode | `app/ai/workspace.py` |
 | A held edit runs before you decide | while the turn has held edits (or changed `.git` settings), mCode's build, test, check and clean tools refuse to run for Claude | `app/ai/workspace.py` `pending_reason`, `app/ai/bridge.py` |
 | Claude plants a command in git's settings | `.git/config`, `.git/info` and `.git/hooks` are copied before an in-place turn and put back after it; mCode's own git never runs programs named in a repository's configuration | `app/ai/workspace.py`, `app/projects/gitutil.py` |
 | A stopped request keeps building | ending a turn cancels the jobs it started | `app/ai/bridge.py` |
-| A change breaks the project | Ask mode: nothing changes before approval; other modes: snapshot + backup before every request, Undo | `app/ai/workspace.py`, `app/projects/backups.py` |
+| A change breaks the project | Manual mode: nothing changes before approval; Plan mode: nothing changes; Auto modes: snapshot + backup before every request, Undo | `app/ai/workspace.py`, `app/projects/backups.py` |
 | The MCP server is misused | it can only call tools of its own request's mode, for that project, while the request runs (random per-request token over an owner-only socket); arguments are checked | `app/ai/bridge.py` |
 | Secrets reach logs or the AI | context and logs pass through a redactor (API keys, tokens, OAuth codes, passwords in URLs) | `app/core/redact.py` |
 
 Claude's login is Claude Code's own (`~/.claude`); mCode never reads it. mCode
-keeps only "signed in", the method and the plan.
+keeps only "signed in", the method and the plan. The usage the AI Engineer
+shows comes from the events Claude Code prints for each request (numbers and
+states, `<data>/ai/usage.json`); the browser gets tool output only from
+mCode's own tools (redacted), never the contents of files Claude read.
 
-**Assisted and Advanced mode run code on this device.** Host tests
+**Auto and Auto + git mode run code on this device.** Host tests
 (`pio test -e native`, `make test`) compile and run project code, which
 Claude may have written, as your user, and every build runs the project's
 build scripts. mCode holds build-script edits for your decision, but a test
-is code. Use Ask mode for projects you do not trust.
+is code. Use Manual or Plan mode for projects you do not trust.
 
 ## The sign-in code page
 

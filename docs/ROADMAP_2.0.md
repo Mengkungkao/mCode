@@ -56,6 +56,17 @@ before that would claim more than was verified.
 | Mobile serial monitor | IMPLEMENTED |
 | Reconnect refresh (A-12), bounded browser state, batched output (A-13) | IMPLEMENTED; reconnect checked in headless Chromium (server restart) |
 
+### 0.3.0: AI Engineer like Claude Code in VS Code (owner's request, 2026-11-28)
+
+| Item | Status |
+|---|---|
+| Live steps (thinking, tools with state and time, build progress), status line with time and tokens | IMPLEMENTED; SOFTWARE TESTED (fake CLI); headless Chromium with a scripted CLI |
+| Modes Manual / Auto / Auto + git / Plan in the composer (Shift+Tab), Plan read-only with *Carry out* | IMPLEMENTED; SOFTWARE TESTED |
+| Model picker; `ai.model` validated | IMPLEMENTED; SOFTWARE TESTED |
+| Usage: context ring, plan limits from Claude Code's `rate_limit_event`, tokens and cost | IMPLEMENTED; SOFTWARE TESTED (shapes from Claude Code 2.1.332); a real request through the chat NOT VERIFIED |
+| Phone header title on the left, no repeated large titles | IMPLEMENTED; headless Chromium |
+| A-19/A-20 request bodies on kept-alive connections | SOFTWARE TESTED |
+
 ## Milestone 5 — security
 
 | Item | Status |

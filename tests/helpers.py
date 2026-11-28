@@ -170,9 +170,14 @@ if "--resume" in args:
         sys.exit(1)
 prompt = args[args.index("--") + 1] if "--" in args else ""
 cwd = os.getcwd()
+model = "claude-" + args[args.index("--model") + 1] + "-9" if "--model" in args else "claude-fake-9"
 def emit(obj):
     print(json.dumps(obj), flush=True)
-emit({"type": "system", "subtype": "init", "session_id": session, "model": "fake",
+def usage(context, output):
+    # The shape Claude Code 2.1.332 reports (checked 2026-11-28).
+    return {"input_tokens": 2, "cache_creation_input_tokens": context - 652,
+            "cache_read_input_tokens": 650, "output_tokens": output, "service_tier": "standard"}
+emit({"type": "system", "subtype": "init", "session_id": session, "model": model,
       "permissionMode": "acceptEdits", "apiKeySource": "none", "cwd": cwd})
 if scenario == "fail":
     print("API Error: usage limit reached", file=sys.stderr)
@@ -188,6 +193,16 @@ if scenario == "maxturns":
     sys.exit(0)
 if scenario == "slow":
     time.sleep(30)
+emit({"type": "assistant", "message": {"id": "msg_0", "model": model, "content": [
+      {"type": "thinking", "thinking": "Look at the main file first."}], "usage": usage(4000, 12)}})
+emit({"type": "rate_limit_event", "rate_limit_info": {
+      "status": "allowed", "resetsAt": 1795852800, "rateLimitType": "five_hour",
+      "overageStatus": "rejected", "isUsingOverage": False, "canUserPurchaseCredits": True,
+      "unifiedWindows": {"five_hour": {"utilization": 0.04, "resetsAt": 1795852800,
+                                       "status": "allowed"},
+                         "seven_day": {"utilization": 0.24, "resetsAt": 1796349600,
+                                       "status": "allowed"}}},
+      "uuid": "u-1", "session_id": session})
 candidates = []
 for root, dirs, files in os.walk(cwd):
     rel = os.path.relpath(root, cwd)
@@ -198,11 +213,13 @@ candidates.sort(key=lambda p: (not os.path.basename(p).startswith("main"), p))
 target = candidates[0] if candidates else None
 text = "Nothing to change."
 if scenario in ("edit", "risky", "nosession") and target:
-    emit({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "t1", "name": "Edit",
-          "input": {"file_path": target}}]}})
+    emit({"type": "assistant", "message": {"id": "msg_1", "model": model, "content": [
+          {"type": "tool_use", "id": "t1", "name": "Edit", "input": {"file_path": target}}],
+          "usage": usage(4100, 40)}})
     with open(target, "a") as handle:
         handle.write("\n// changed by fake Claude\n")
-    emit({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t1"}]}})
+    emit({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t1",
+          "content": "The file " + target + " has been updated. SECRET_IN_FILE=1"}]}})
     text = "Added a comment.\nSUMMARY: Added a comment to the main file."
 if scenario == "gitconfig":
     with open(os.path.join(cwd, ".git", "config"), "a") as handle:
@@ -239,10 +256,16 @@ if scenario in ("mcp", "mcp-risky"):
                        "info_error": info["result"]["isError"],
                        "build": build["result"]["content"][0]["text"][:200],
                        "build_error": build["result"]["isError"]}) + "\nSUMMARY: mcp checked"
-emit({"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}})
+emit({"type": "assistant", "message": {"id": "msg_2", "model": model, "content": [
+      {"type": "text", "text": text}], "usage": usage(4200, 30)}})
 emit({"type": "result", "subtype": "success", "is_error": False, "result": text, "num_turns": 2,
       "duration_ms": 10, "total_cost_usd": 0.001, "session_id": session or "s-1",
-      "permission_denials": []})
+      "permission_denials": [],
+      "usage": {"input_tokens": 6, "cache_creation_input_tokens": 3500,
+                "cache_read_input_tokens": 8800, "output_tokens": 82},
+      "modelUsage": {model: {"inputTokens": 6, "outputTokens": 82, "cacheReadInputTokens": 8800,
+                             "cacheCreationInputTokens": 3500, "costUSD": 0.001,
+                             "contextWindow": 200000, "maxOutputTokens": 64000}}})
 '''
 
 

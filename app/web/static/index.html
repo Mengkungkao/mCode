@@ -69,12 +69,11 @@
   <aside class="ai" id="ai">
     <div class="ai-head">
       <span class="ai-title">✦ AI Engineer</span>
-      <select id="ai-mode" title="What Claude may do"></select>
+      <span class="spacer"></span>
       <button class="btn icon small" id="ai-new" title="New conversation">＋</button>
     </div>
-    <div class="ai-body" id="ai-body"></div>
+    <div class="ai-body" id="ai-body" aria-live="polite"></div>
     <div class="ai-review hidden" id="ai-review"></div>
-    <div class="ai-turn hidden" id="ai-turn"></div>
     <div class="ai-quick" id="ai-quick">
       <button data-kind="create">Create firmware</button>
       <button data-kind="explain">Explain code</button>
@@ -85,15 +84,18 @@
       <button data-kind="analyze-serial">Explain serial output</button>
     </div>
     <div class="ai-input">
-      <button class="ai-mode-note" id="ai-mode-note" type="button"></button>
-      <div class="attachments" id="ai-attachments"></div>
-      <textarea id="ai-text" rows="3" enterkeyhint="send" autocapitalize="sentences" placeholder="Ask Claude to create, explain, fix or improve firmware…  (Ctrl+Enter sends)"></textarea>
-      <div class="ai-input-row">
-        <button class="btn small" id="ai-attach-file" title="Attach the open file">+ file</button>
-        <button class="btn small" id="ai-attach-serial" title="Attach serial output">+ serial</button>
-        <div class="spacer"></div>
-        <button class="btn primary small" id="ai-send">Send</button>
-        <button class="btn danger small hidden" id="ai-stop">Stop</button>
+      <div class="composer">
+        <div class="attachments hidden" id="ai-attachments"></div>
+        <textarea id="ai-text" rows="2" enterkeyhint="enter" autocapitalize="sentences" aria-label="Message Claude" placeholder="Ask Claude to create, explain, fix or improve firmware…"></textarea>
+        <div class="composer-bar">
+          <button class="cbtn icon" id="ai-attach" type="button" title="Attach the open file or serial output" aria-label="Attach"><svg class="ci" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+          <button class="cbtn mode" id="ai-mode-btn" type="button" aria-label="Mode"></button>
+          <button class="cbtn model" id="ai-model-btn" type="button" aria-label="Model"></button>
+          <span class="spacer"></span>
+          <button class="cbtn ctx" id="ai-context" type="button" aria-label="Usage"></button>
+          <button class="send" id="ai-send" type="button" title="Send (Enter)" aria-label="Send"><svg class="ci" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V6M6 11.5l6-6 6 6"/></svg></button>
+          <button class="send stop hidden" id="ai-stop" type="button" title="Stop Claude" aria-label="Stop"><svg class="ci" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" stroke="none"/></svg></button>
+        </div>
       </div>
     </div>
   </aside>
@@ -188,6 +190,7 @@
 <script src="/static/vendor/codemirror/addon/comment/comment.js"></script>
 <script src="/static/vendor/codemirror/addon/selection/active-line.js"></script>
 <script src="/static/vendor/codemirror/addon/lint/lint.js"></script>
+<script src="/static/chat.js"></script>
 <script src="/static/app.js"></script>
 <script src="/static/mobile.js"></script>
 </body>

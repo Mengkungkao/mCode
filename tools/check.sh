@@ -72,7 +72,8 @@ suite() { python3 -m unittest discover -s tests -t . 2>&1 | tail -n 3 | grep -q 
 javascript() {
   # Syntax of the desktop IDE's own scripts (vendored libraries excluded); needs node.
   if command -v node >/dev/null 2>&1; then
-    node --check app/web/static/app.js && node --check app/web/static/mobile.js &&
+    node --check app/web/static/app.js && node --check app/web/static/chat.js &&
+      node --check app/web/static/mobile.js &&
       node --check app/web/static/pair.js
   else echo "node not found: JavaScript syntax check skipped"; fi
 }

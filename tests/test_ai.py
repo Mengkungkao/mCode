@@ -427,6 +427,102 @@ class BridgeSafetyTests(AITestCase):
         self.assertFalse(bridge.call(token, "project_info", ["not", "a", "dict"])["ok"])
 
 
+class PlanModeTests(AITestCase):
+    def test_plan_reads_only_and_never_changes_the_project(self):
+        studio, project = self.make("plan")
+        main = os.path.join(project.path, "src", "main.c")
+        with open(main) as handle:
+            before = handle.read()
+        turn = self.run_turn(studio, project, "Plan a blinking LED")   # the fake edits anyway
+        self.assertEqual(turn.state, "done", turn.error)
+        with open(main) as handle:
+            self.assertEqual(handle.read(), before)
+        self.assertIsNone(studio.ai.review(project), "a plan must never wait for approval")
+        self.assertEqual(turn.changes, [])
+        self.assertTrue(turn.notices and "Plan mode changes nothing" in turn.notices[0])
+        call = [c for c in self.calls() if "-p" in c["args"]][-1]
+        args = call["args"]
+        self.assertEqual(args[args.index("--tools") + 1], "Read,Glob,Grep")
+        allowed = args[args.index("--allowedTools") + 1].split(",")
+        self.assertNotIn("mcp__mcode__build", allowed)
+        self.assertIn("mcp__mcode__project_info", allowed)
+        self.assertTrue(call["cwd"].startswith(studio.paths.workspaces))
+        self.assertIn("Mode: Plan", args[args.index("--") + 1])
+        self.assertEqual(turn.slot, "stage")                    # the same conversation as Manual
+
+
+class UsageAndStepsTests(AITestCase):
+    def test_turn_shows_steps_in_order_with_usage_and_plan_limits(self):
+        studio, project = self.make("assisted")
+        seen = []
+        studio.events.subscribe(lambda topic, data: seen.append(data) if topic == "ai" else None)
+        turn = self.run_turn(studio, project)
+        self.assertEqual(turn.state, "done", turn.error)
+        data = turn.to_dict()
+        self.assertEqual([s["type"] for s in data["steps"]], ["thinking", "tool", "text"])
+        tool = data["steps"][1]
+        self.assertEqual((tool["label"], tool["state"]), ("Editing src/main.c", "done"))
+        self.assertEqual(tool["detail"], "", "another tool's output (file contents) was kept")
+        self.assertEqual(data["model"], "claude-fake-9")
+        self.assertEqual(data["context"], 4200)                  # the last message read 4200
+        self.assertEqual(data["context_window"], 200000)
+        self.assertEqual(data["usage"]["output"], 82)            # Claude Code's own total
+        # a progress event while working already had the steps and the tokens so far
+        working = [d["turn"] for d in seen if d.get("what") == "progress" and
+                   d["turn"]["state"] == "working" and d["turn"]["steps"]]
+        self.assertTrue(working)
+        self.assertEqual(working[-1]["steps"][0], {"type": "thinking",
+                                                   "text": "Look at the main file first."})
+        status = studio.ai.status()
+        self.assertEqual(status["limits"]["windows"]["five_hour"]["used"], 0.04)
+        self.assertEqual(status["limits"]["windows"]["seven_day"]["resets_at"], 1796349600)
+        self.assertNotIn("canUserPurchaseCredits", json.dumps(status["limits"]))
+        self.assertEqual(status["last_model"], "claude-fake-9")
+        self.assertIn("usage", [d.get("what") for d in seen])
+        entry = studio.ai.conversation(project)[-1]
+        self.assertEqual((entry["model"], entry["context"], entry["mode"]),
+                         ("claude-fake-9", 4200, "assisted"))
+        self.assertEqual([s["label"] for s in entry["steps"] if s["type"] == "tool"],
+                         ["Editing src/main.c"])
+        self.assertEqual(studio.ai.context_of(project)["project"]["window"], 200000)
+        # remembered after a restart (numbers and states only), forgotten with the conversation
+        from app.ai.service import AIService
+        again = AIService(studio)
+        self.assertEqual(again.limits["windows"]["five_hour"]["used"], 0.04)
+        self.assertEqual(again.windows["claude-fake-9"], 200000)
+        studio.ai.clear_conversation(project)
+        self.assertEqual(studio.ai.context_of(project), {})
+
+    def test_model_setting_reaches_claude_code_and_is_validated(self):
+        studio, project = self.make("ask")
+        studio.settings.set("ai.model", "opus")
+        turn = self.run_turn(studio, project)
+        args = [c for c in self.calls() if "-p" in c["args"]][-1]["args"]
+        self.assertEqual(args[args.index("--model") + 1], "opus")
+        self.assertEqual(turn.model, "claude-opus-9")
+        for good in ("sonnet", "opus[1m]", "claude-sonnet-5-5", ""):
+            studio.settings.set("ai.model", good)
+        for bad in ("--dangerously-skip-permissions", "-x", "opus sonnet", "a" * 120):
+            with self.assertRaises(ValueError, msg=bad):
+                studio.settings.set("ai.model", bad)
+
+    def test_mcode_tool_results_are_shown_and_redacted(self):
+        studio, project = self.make("assisted")
+        turn = studio.ai.ask(project, "Build it")
+        studio.jobs.wait(turn.job_id, 30)
+        lines = [{"type": "assistant", "message": {"content": [
+                     {"type": "tool_use", "id": "b1", "name": "mcp__mcode__build", "input": {}}]}},
+                 {"type": "user", "message": {"content": [
+                     {"type": "tool_result", "tool_use_id": "b1", "is_error": False, "content": [
+                         {"type": "text", "text": "Build failed: OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwxyz0123"}]}]}}]
+        for line in lines:
+            studio.ai._on_line(turn, json.dumps(line), project.path)
+        step = turn.steps[-1]
+        self.assertEqual((step["label"], step["state"]), ("Building the firmware", "done"))
+        self.assertTrue(step["detail"].startswith("Build failed"))
+        self.assertNotIn("sk-abcdefghijklmnopqrstuvwxyz0123", step["detail"])
+
+
 class ContextTests(TempCase):
     def test_prompt_contains_context_and_caps_attachments(self):
         studio = self.studio(hardware=False, ai=False)
@@ -467,6 +563,40 @@ class StreamTranslationTests(unittest.TestCase):
                                                                     "tool_input": {"command": "rm"}}]})
         self.assertTrue(result[0]["ok"])
         self.assertEqual(result[0]["denials"], ["Running rm"])
+
+    def test_usage_thinking_limits_and_results_from_claude_code_2_1(self):
+        # Shapes recorded from Claude Code 2.1.332 (2026-11-28).
+        out = translate({"type": "assistant", "message": {
+            "id": "msg_1", "model": "claude-haiku-5-5",
+            "content": [{"type": "thinking", "thinking": "Hmm."}, {"type": "text", "text": "OK"}],
+            "usage": {"input_tokens": 2, "cache_creation_input_tokens": 2931,
+                      "cache_read_input_tokens": 649, "output_tokens": 4}}})
+        self.assertEqual([o["kind"] for o in out], ["thinking", "text", "usage"])
+        self.assertEqual(out[2]["context"], 3582)
+        self.assertEqual((out[2]["model"], out[2]["message_id"]), ("claude-haiku-5-5", "msg_1"))
+        limits = translate({"type": "rate_limit_event", "rate_limit_info": {
+            "status": "allowed", "resetsAt": 1795852800, "rateLimitType": "five_hour",
+            "overageDisabledReason": "org_level_disabled", "isUsingOverage": False,
+            "unifiedWindows": {"five_hour": {"utilization": 0.04, "resetsAt": 1795852800,
+                                             "status": "allowed"},
+                               "seven_day": {"utilization": 0.24, "resetsAt": 1796349600},
+                               "Bad Name": {"utilization": 1}}}})[0]
+        self.assertEqual(limits["kind"], "limits")
+        self.assertEqual(sorted(limits["windows"]), ["five_hour", "seven_day"])
+        self.assertEqual(limits["windows"]["seven_day"]["used"], 0.24)
+        self.assertNotIn("overageDisabledReason", json.dumps(limits))
+        self.assertEqual(translate({"type": "rate_limit_event"}), [])
+        result = translate({"type": "result", "subtype": "success", "is_error": False,
+                            "usage": {"input_tokens": 2, "output_tokens": 4},
+                            "modelUsage": {"claude-haiku-5-5": {"contextWindow": 1000000,
+                                                                "costUSD": 0.0006}}})[0]
+        self.assertEqual(result["models"]["claude-haiku-5-5"]["context_window"], 1000000)
+        self.assertEqual(result["usage"]["output"], 4)
+        res = translate({"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "t", "is_error": True,
+             "content": [{"type": "text", "text": "x" * 1000}]}]}})[0]
+        self.assertTrue(res["error"])
+        self.assertEqual(len(res["text"]), 400)
 
     def test_auth_summary_api_key_note(self):
         summary = auth_summary({"loggedIn": True, "authMethod": "claude.ai", "subscriptionType": "max",

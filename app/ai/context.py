@@ -46,12 +46,17 @@ End with one last line: "SUMMARY: <what you did or found, at most 90 characters>
 """
 
 MODE_NOTES = {
-    "ask": "Mode: Ask before changes. You are editing a staging copy; the user reviews and "
-           "approves your changes before they reach the project. You cannot build in this mode.",
-    "assisted": "Mode: Assisted. You edit the project directly and may build and run tests with "
+    "ask": "Mode: Manual (ask before changes). You are editing a staging copy; the user reviews "
+           "and approves your changes before they reach the project. You cannot build in this "
+           "mode.",
+    "assisted": "Mode: Auto. You edit the project directly and may build and run tests with "
                 "mCode's tools (mcp__mcode__build, mcp__mcode__run_tests). The user can undo "
                 "your changes.",
-    "advanced": "Mode: Advanced. You edit the project directly, may build, test and check with "
+    "plan": "Mode: Plan. You cannot change files or build in this mode. Read the project and "
+            "answer with a concrete, numbered plan: what to change in which files and why, how "
+            "to build and test it, and the hardware risks (pins, voltages, partitions). Ask "
+            "questions you need answered first. The user carries the plan out in another mode.",
+    "advanced": "Mode: Auto + git. You edit the project directly, may build, test and check with "
                 "mCode's tools, and may use git through mCode's tools (mcp__mcode__git_status, "
                 "git_diff, git_log, git_show, git_commit); there is no shell. The user can undo "
                 "your changes.",

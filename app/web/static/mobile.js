@@ -124,8 +124,8 @@ function renderHeader() {
     acts.appendChild(headerButton("More", (e) => editorMenu(e.currentTarget), {icon: "more", title: "More"}));
   } else if (v === "ai") {
     title.textContent = "AI Engineer";
-    sub.textContent = proj ? `${proj.name} · ${modeShort()}` : "";
-    acts.appendChild(headerButton("Mode", () => modeSheet(), {title: "What Claude may do", icon: "more"}));
+    sub.textContent = proj ? proj.name : "";
+    if (proj) acts.appendChild(headerButton("New", () => newConversation(), {icon: "plus", title: "New conversation"}));
   } else if (v === "build") {
     title.textContent = "Build"; sub.textContent = proj ? proj.name : "";
     backTo = "home"; backLabel = "Home";
@@ -147,7 +147,6 @@ function renderHeader() {
   back.classList.toggle("hidden", !backTo);
   $("#m-back-label").textContent = backLabel;
 }
-function modeShort() { return {ask: "Ask before changes", assisted: "Assisted", advanced: "Advanced"}[S.settings["ai.mode"]] || ""; }
 function runningJob() {
   const running = Array.from(S.jobs.values()).filter((j) => j.state === "running" || j.state === "queued");
   return running.length ? running[running.length - 1] : null;
@@ -165,29 +164,15 @@ function editorMenu(anchor) {
   items.push("-", {label: "Close file", run: () => { closeTab(S.active); if (!S.active) mShow("projects"); else mShow("editor"); }});
   showMenu(anchor, items);
 }
-function modeSheet() {
-  const field = S.fields.find((f) => f.key === "ai.mode");
-  if (!field) return;
-  const box = h("div", {}, h("h2", {}, "What may Claude do?"));
-  const group = h("div", {class: "m-group"});
-  for (const choice of field.choices) {
-    const row = h("div", {class: "m-row tap"}, h("div", {class: "m-main"}, h("div", {class: "title"}, field.choice_labels[choice]), h("div", {class: "sub", style: "white-space:normal"}, MODE_TEXT[choice])),
-      S.settings["ai.mode"] === choice ? h("span", {class: "ok", style: "font-size:20px"}, "✓") : null);
-    row.addEventListener("click", async () => { closeModal(); await setAiMode(choice); });
-    group.appendChild(row);
-  }
-  box.appendChild(group);
-  box.appendChild(h("p", {class: "m-foot"}, "In every mode, flashing, erasing and installing need your own confirmation; Claude has no tool for them."));
-  box.appendChild(h("div", {class: "buttons"}, h("button", {class: "btn", onclick: closeModal}, "Close")));
-  openModal(box);
-}
+function modeSheet() { modePicker(null); }
 
 // --------------------------------------------------------------- job bar
 function renderJobBar() {
   const bar = $("#m-job");
   if (!bar) return;
   const job = isPhone() ? runningJob() : null;
-  if (!job || M.view === "build") { bar.classList.add("hidden"); return; }
+  const inChat = job && M.view === "ai" && (job.kind === "ai" || (job.meta && job.meta.source === "ai"));
+  if (!job || M.view === "build" || inChat) { bar.classList.add("hidden"); return; }
   bar.classList.remove("hidden"); bar.innerHTML = "";
   const elapsed = job.started ? Math.round(Date.now() / 1000 - job.started) : 0;
   const pct = job.progress != null ? Math.round(job.progress * 100) : null;
@@ -201,7 +186,6 @@ function renderMobileHome() {
   const page = $("#m-home"); const st = S.state;
   if (!st) return;
   page.innerHTML = "";
-  page.appendChild(h("div", {class: "m-large"}, "Home"));
   const proj = S.project;
   const last = proj && proj.last_build;
   if (proj) {
@@ -270,7 +254,6 @@ async function renderMobileProjects() {
   let data;
   try { data = await GET("projects?q=" + encodeURIComponent(mProjectQuery)); } catch (e) { fail(e); return; }
   page.innerHTML = "";
-  page.appendChild(h("div", {class: "m-large"}, "Projects"));
   const search = h("input", {class: "m-search", type: "search", placeholder: "Search projects", value: mProjectQuery, enterkeyhint: "search"});
   search.addEventListener("input", () => { mProjectQuery = search.value; later("proj-search", renderMobileProjects, 350); });
   page.appendChild(search);
@@ -331,7 +314,6 @@ function mProjectMenu(p) {
 function renderMobileDevices() {
   const page = $("#m-devices");
   page.innerHTML = "";
-  page.appendChild(h("div", {class: "m-large"}, "Devices"));
   const group = h("div", {class: "m-group"});
   group.appendChild(mRow({title: "Serial monitor", sub: S.monitor.connected ? `Connected · ${(S.monitor.port || "").split("/").pop()} · ${S.monitor.baud} baud` : "Not connected", icon: {text: "≋", color: "#30b0c7"}, run: () => mShow("serial")}));
   if (S.project) group.appendChild(mRow({title: "Flash firmware", sub: `${S.project.name} → ${S.project.board_name}`, icon: {text: "↯", color: "#ff9f0a"}, run: () => flashDialog("upload")}));
@@ -346,11 +328,12 @@ function renderMobileDevices() {
 function renderMobileSettings() {
   const page = $("#m-settings");
   page.innerHTML = "";
-  page.appendChild(h("div", {class: "m-large"}, "Settings"));
   const ai = S.ai || {};
   const g1 = h("div", {class: "m-group"});
   g1.appendChild(mRow({title: "Claude Code", value: (ai.auth && ai.auth.label) || ai.state || "", icon: {text: "✦"}, run: claudeDialog}));
   g1.appendChild(mRow({title: "AI mode", value: modeShort(), icon: {text: "◐", color: "#5e5ce6"}, run: modeSheet}));
+  g1.appendChild(mRow({title: "Claude model", value: modelChip(), icon: {text: "◆", color: "#ff9f0a"}, run: () => modelPicker(null)}));
+  g1.appendChild(mRow({title: "Usage", value: usageShort(), icon: {text: "◔", color: "#30b0c7"}, run: () => usagePanel(null)}));
   page.appendChild(g1);
   page.appendChild(h("div", {class: "m-section"}, "Appearance"));
   const g2 = h("div", {class: "m-group"});
@@ -479,11 +462,6 @@ function confirmRevoke(s) {
 const EVENT_TEXT = {"session-created": "Browser paired or signed in", "session-revoked": "Browser signed out", "sessions-revoked-all": "All browsers signed out",
   "session-role": "Access changed", "session-expired": "Unused browser expired", "sessions-expired": "Unused browsers expired", "pairing-opened": "Pairing opened",
   "pairing-closed": "Pairing closed", "pairing-failed": "Wrong pairing code", "pairing-rate-limited": "Too many pairing tries", "link-refused": "Used or expired link refused"};
-const MODE_TEXT = {
-  ask: "Claude works on a copy and proposes changes. You review the diff; nothing reaches the project until you approve. No builds.",
-  assisted: "Claude edits the project, builds and runs tests. Tests that run on this device run code Claude wrote. Undo is always there.",
-  advanced: "Like Assisted, plus static analysis and git commits through mCode.",
-};
 
 // ------------------------------------------------------------- code keys
 function renderCodeKeys() {
@@ -511,13 +489,10 @@ function initMobile() {
   TABLET.addEventListener ? TABLET.addEventListener("change", applyLayout) : TABLET.addListener(applyLayout);
   // Text fields on the phone: keep the focused one in view above the keyboard.
   document.addEventListener("focusin", (e) => { if (isPhone() && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) setTimeout(() => e.target.scrollIntoView({block: "nearest"}), 300); });
-  // The composer grows with its text, up to a third of the screen.
-  const text = $("#ai-text");
-  text.addEventListener("input", () => { if (!isPhone()) return; text.style.height = "auto"; text.style.height = Math.min(text.scrollHeight, window.innerHeight * 0.32) + "px"; });
   applyLayout();
   placeholder();
 }
 function placeholder() {
-  $("#ai-text").placeholder = isPhone() ? "Message Claude" : "Ask Claude to create, explain, fix or improve firmware…  (Ctrl+Enter sends)";
+  $("#ai-text").placeholder = isPhone() ? "Message Claude" : "Ask Claude to create, explain, fix or improve firmware…";
 }
 initMobile();

@@ -55,7 +55,10 @@ On an iPhone with Safari, on the same Wi-Fi as the device:
    home indicator; Add to Home Screen opens full-screen with the icon.
 3. Editor: open a file, type with the keyboard open (code keys stay above
    it, no zoom), select text with the handles, save, build.
-4. AI Engineer: send a request, Stop, review a diff, Apply.
+4. AI Engineer: send a request and watch its steps appear, Stop, review a
+   diff, Apply; switch the mode and the model from the sheets under the
+   message box (it stays above the keyboard); a Plan request offers *Carry
+   out this plan*; the Usage sheet shows the plan's limits after a request.
 5. Build view while the screen is locked for a minute: the result is shown
    after unlocking.
 6. Serial monitor: connect, pause, resume (lines received while paused

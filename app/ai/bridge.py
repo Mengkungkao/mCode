@@ -57,7 +57,8 @@ ADVANCED_TOOLS = {
     "git_commit": "Stage all changes and commit them with the given message.",
 }
 MODE_TOOLS = {"ask": dict(READ_TOOLS), "assisted": dict(READ_TOOLS, **BUILD_TOOLS),
-              "advanced": dict(READ_TOOLS, **BUILD_TOOLS, **ADVANCED_TOOLS)}
+              "advanced": dict(READ_TOOLS, **BUILD_TOOLS, **ADVANCED_TOOLS),
+              "plan": dict(READ_TOOLS)}
 JOB_TOOLS = {"build": "build", "run_tests": "test", "static_check": "check", "clean": "clean"}
 SCHEMAS = {
     "serial_log": {"type": "object", "properties": {

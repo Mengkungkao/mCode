@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.3.0] — 2026-11-28
+
+The AI Engineer now works like Claude Code's chat in VS Code.
+
+- **Live steps.** While Claude works, its answer builds up in the
+  conversation: thinking, each tool with a spinner and its time (*Reading …*,
+  *Editing …*, *Building the firmware* with the build's progress), its text
+  between the steps, and a status line with what is running, the time and
+  the tokens so far. Finished answers fold their steps and show the model,
+  time and tokens.
+- **Modes like Claude Code's:** *Manual* (was *Ask before changes*), *Auto*
+  (was *Assisted*), *Auto + git* (was *Advanced*) and a new **Plan** mode:
+  Claude reads the project and writes a plan, with no editing tool and no
+  build; *Carry out this plan* sends it to Manual or Auto. Choose the mode
+  under the message box or with Shift+Tab. Saved settings keep working.
+- **Model.** Default, Opus, Sonnet, Haiku, Fable or another model id, under
+  the message box or in Settings; it applies from the next request.
+- **Usage.** The context ring under the message box shows how full the
+  conversation is; tap it for your plan's limits as Claude Code reports
+  them (current 5-hour session and this week, with reset times), and this
+  conversation's requests, tokens and cost.
+- **Composer:** ＋ attaches the open file or the serial output; Send becomes
+  Stop while Claude works; on a computer Enter sends and Shift+Enter starts
+  a new line.
+- **Phone:** the header title sits on the left (*mCode Studio* on Home,
+  *Projects*, …) and the pages no longer repeat it as a second large title.
+- **Fixed (0.2.0 regression):** a second action on the same browser
+  connection could be read with the first one's data, for example a request
+  to Claude sent right after changing the mode arrived empty. A request
+  refused before it was read no longer disturbs the next one.
+
+Not verified: a real Claude request through the new chat (tested with
+Claude Code's recorded event shapes and a scripted CLI); iPhone Safari;
+the Whisplay LCD with the new mode names (previews only).
+
 ## [0.2.0] — 2026-11-28
 
 First step of the "mCode Studio 2.0" work: an audit, the fixes it found, a

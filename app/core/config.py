@@ -17,6 +17,7 @@ The canonical description is docs/CONFIGURATION.md.
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -44,6 +45,7 @@ class Field:
     lcd: bool = False               # offered on the small screen (simple settings)
     secret: bool = False
     admin: bool = False             # only browsers with full access may change it
+    pattern: str = ""               # str: the whole value must match (empty is allowed)
 
     @property
     def needs_admin(self) -> bool:
@@ -96,24 +98,36 @@ class Field:
                 raise ValueError(f"{self.key}: expected text")
             if len(value) > 1024 or "\0" in value or "\n" in value:
                 raise ValueError(f"{self.key}: text too long or not one line")
-            return value.strip()
+            value = value.strip()
+            if self.pattern and value and not re.fullmatch(self.pattern, value):
+                raise ValueError(f"{self.key}: {value!r} is not allowed here")
+            return value
         raise ValueError(f"{self.key}: unknown kind {self.kind}")
 
 
-AI_MODES = {"ask": "Ask before changes", "assisted": "Assisted development",
-            "advanced": "Advanced development"}
+# The ids are stored in settings.json and never change; the names follow Claude Code's own
+# mode picker (Manual, Auto, Plan). AI_MODE_SHORT is what a chip or the LCD shows.
+AI_MODES = {"ask": "Manual: ask before changes", "assisted": "Auto: edit, build and test",
+            "advanced": "Auto + git", "plan": "Plan: change nothing"}
+AI_MODE_SHORT = {"ask": "Manual", "assisted": "Auto", "advanced": "Auto + git", "plan": "Plan"}
+# A Claude Code model alias or model id ("opus", "claude-sonnet-5-5", "opus[1m]"); never an
+# option (it is passed as the argument of --model).
+MODEL_PATTERN = r"[A-Za-z0-9][A-Za-z0-9._:/@\[\]-]{0,99}"
 
 FIELDS: List[Field] = [
     # ------------------------------------------------------------------ AI
     Field("ai.mode", "choice", "ask", "AI mode",
-          "Ask: Claude proposes changes and you approve them. Assisted: Claude edits files and "
-          "runs builds and tests; tests that run on this device (PlatformIO native, make test) "
-          "run code Claude wrote, as your user. Advanced: also git through mCode. Flashing, "
-          "erasing and installing always need your confirmation.",
+          "Manual: Claude works on a copy and you approve each change. Auto: Claude edits files "
+          "and runs builds and tests; tests that run on this device (PlatformIO native, make "
+          "test) run code Claude wrote, as your user. Auto + git: also static analysis and git "
+          "through mCode. Plan: Claude reads the project and writes a plan; it changes nothing. "
+          "Flashing, erasing and installing always need your confirmation.",
           choices=tuple(AI_MODES), choice_labels=AI_MODES, lcd=True),
     Field("ai.claude_path", "path", "", "Claude Code program",
           "Empty: found automatically (PATH, ~/.local/bin/claude)."),
-    Field("ai.model", "str", "", "Claude model", "Empty: Claude Code's default model."),
+    Field("ai.model", "str", "", "Claude model",
+          "Empty: Claude Code's default model. An alias (opus, sonnet, haiku, fable) or a model "
+          "id; your Claude plan decides which models you can use.", pattern=MODEL_PATTERN),
     Field("ai.voice_autosend", "bool", False, "Send voice requests at once",
           "Off: mCode shows what it heard and waits for you to send it.", lcd=True),
     Field("ai.turn_timeout_s", "int", 1200, "AI task time limit (seconds)", minimum=60,

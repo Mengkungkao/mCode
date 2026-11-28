@@ -14,7 +14,12 @@ the subscription. mCode reports which one is in use and does not pretend
 they are the same.
 
 Turns run ``claude -p --output-format stream-json`` and translate its events
-(see :func:`translate`).
+(see :func:`translate`): text, thinking, tool calls and their results, token
+usage per message, and the plan's usage limits that Claude Code reports
+(``rate_limit_event``, checked with Claude Code 2.1.332 on 2026-11-28:
+``unifiedWindows.five_hour`` / ``seven_day`` with ``utilization`` as a
+fraction and ``resetsAt`` in epoch seconds). mCode keeps only numbers and
+states from these events.
 """
 
 from __future__ import annotations
@@ -259,8 +264,16 @@ def describe_tool(name: str, data: dict, root: str = "") -> str:
     return f"{word} {target}".strip() if target and name != "TodoWrite" else word
 
 
+# Claude Code's model aliases (2.1.332: sonnet, opus, haiku, fable); "" is its default.
+MODEL_CHOICES = [("", "Default"), ("opus", "Opus"), ("sonnet", "Sonnet"), ("haiku", "Haiku"),
+                 ("fable", "Fable")]
+_WINDOW = re.compile(r"^[a-z0-9_]{1,40}$")
+TOOL_DETAIL_CHARS = 400
+
+
 def translate(event: dict, root: str = "") -> List[dict]:
-    """stream-json event -> mCode AI events (init, text, tool, tool_result, result)."""
+    """stream-json event -> mCode AI events (init, text, thinking, tool, tool_result, usage,
+    limits, result)."""
     kind = event.get("type")
     out: List[dict] = []
     if kind == "system" and event.get("subtype") == "init":
@@ -268,21 +281,35 @@ def translate(event: dict, root: str = "") -> List[dict]:
                     "model": event.get("model", ""), "mode": event.get("permissionMode", ""),
                     "api_key_source": event.get("apiKeySource", "")})
     elif kind == "assistant":
-        for block in (event.get("message") or {}).get("content") or []:
+        message = event.get("message") or {}
+        for block in message.get("content") or []:
+            if not isinstance(block, dict):
+                continue
             if block.get("type") == "text" and block.get("text", "").strip():
                 out.append({"kind": "text", "text": block["text"]})
+            elif block.get("type") == "thinking" and str(block.get("thinking") or "").strip():
+                out.append({"kind": "thinking", "text": str(block["thinking"])})
             elif block.get("type") == "tool_use":
                 data = block.get("input") or {}
                 out.append({"kind": "tool", "id": block.get("id", ""), "name": block.get("name"),
                             "label": describe_tool(block.get("name", ""), data, root),
                             "file": _rel(data.get("file_path", ""), root)})
+        usage = usage_summary(message.get("usage"))
+        if usage:
+            out.append(dict(usage, kind="usage", message_id=str(message.get("id") or ""),
+                            model=str(message.get("model") or "")))
     elif kind == "user":
         content = (event.get("message") or {}).get("content") or []
         if isinstance(content, list):
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "tool_result":
                     out.append({"kind": "tool_result", "id": block.get("tool_use_id", ""),
-                                "error": bool(block.get("is_error"))})
+                                "error": bool(block.get("is_error")),
+                                "text": _result_text(block.get("content"))})
+    elif kind == "rate_limit_event":
+        limits = limits_summary(event.get("rate_limit_info"))
+        if limits:
+            out.append(dict(limits, kind="limits"))
     elif kind == "result":
         out.append({"kind": "result", "ok": not event.get("is_error") and
                     event.get("subtype") == "success",
@@ -290,8 +317,78 @@ def translate(event: dict, root: str = "") -> List[dict]:
                     "turns": event.get("num_turns", 0), "duration_ms": event.get("duration_ms", 0),
                     "cost_usd": event.get("total_cost_usd"), "session_id": event.get("session_id"),
                     "errors": [str(e) for e in event.get("errors") or []][:5],
-                    "denials": [_denial(d, root) for d in event.get("permission_denials") or []]})
+                    "denials": [_denial(d, root) for d in event.get("permission_denials") or []],
+                    "usage": usage_summary(event.get("usage")),
+                    "models": models_summary(event.get("modelUsage"))})
     return out
+
+
+def _int(value) -> int:
+    return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) \
+        and value >= 0 else 0
+
+
+def _number(value) -> Optional[float]:
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) \
+        else None
+
+
+def usage_summary(usage) -> dict:
+    """Token counts of one message or turn; ``context`` is what the model read (the size of
+    the conversation so far)."""
+    if not isinstance(usage, dict):
+        return {}
+    data = {"input": _int(usage.get("input_tokens")), "output": _int(usage.get("output_tokens")),
+            "cache_read": _int(usage.get("cache_read_input_tokens")),
+            "cache_write": _int(usage.get("cache_creation_input_tokens"))}
+    data["context"] = data["input"] + data["cache_read"] + data["cache_write"]
+    return data
+
+
+def models_summary(model_usage) -> Dict[str, dict]:
+    """Per model: context window and the turn's cost (Claude Code's ``modelUsage``)."""
+    out: Dict[str, dict] = {}
+    if not isinstance(model_usage, dict):
+        return out
+    for name, data in list(model_usage.items())[:4]:
+        if not isinstance(data, dict) or not isinstance(name, str) or len(name) > 100:
+            continue
+        out[name] = {"context_window": _int(data.get("contextWindow")),
+                     "cost_usd": _number(data.get("costUSD")),
+                     "input": _int(data.get("inputTokens")),
+                     "output": _int(data.get("outputTokens"))}
+    return out
+
+
+def limits_summary(info) -> dict:
+    """The plan's usage limits from a ``rate_limit_event``: states and numbers only."""
+    if not isinstance(info, dict):
+        return {}
+    windows: Dict[str, dict] = {}
+    for name, data in (info.get("unifiedWindows") or {}).items():
+        if len(windows) >= 6 or not isinstance(name, str) or not _WINDOW.match(name) or \
+                not isinstance(data, dict):
+            continue
+        used = _number(data.get("utilization"))
+        if used is None:
+            continue
+        windows[name] = {"used": max(0.0, used), "resets_at": _number(data.get("resetsAt")),
+                         "status": str(data.get("status") or "")[:40]}
+    return {"status": str(info.get("status") or "")[:40],
+            "type": str(info.get("rateLimitType") or "")[:40],
+            "resets_at": _number(info.get("resetsAt")),
+            "using_overage": bool(info.get("isUsingOverage")), "windows": windows}
+
+
+def _result_text(content) -> str:
+    if isinstance(content, str):
+        text = content
+    elif isinstance(content, list):
+        text = "\n".join(str(b.get("text") or "") for b in content
+                         if isinstance(b, dict) and b.get("type") == "text")
+    else:
+        text = ""
+    return text.strip()[:TOOL_DETAIL_CHARS]
 
 
 def _rel(path: str, root: str) -> str:

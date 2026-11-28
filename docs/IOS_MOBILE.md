@@ -34,16 +34,18 @@ tunnels when the network is not trusted.
 ## Phone layout
 
 Bottom tab bar: **Home · Projects · AI Engineer · Devices · Settings**. The
-header shows where you are, a back button in sub-screens and the screen's
-actions; a bar under it shows a running build, upload or install (tap: build
-view; *Stop* cancels).
+header shows where you are as a bold title on the left (*mCode Studio* on
+Home, *Projects*, *AI Engineer*, *Devices*, *Settings*; since 0.3.0 the pages
+no longer repeat it as a second large title), a back button in sub-screens
+and the screen's actions on the right; a bar under it shows a running build,
+upload or install (tap: build view; *Stop* cancels).
 
 | Screen | Contents |
 |---|---|
 | Home | current project (board, toolchain, last build with flash/RAM use, Build · Flash · Code or *Fix with AI*), quick actions (New Project, Open Project, Ask AI, Build Firmware, Connect Board, Serial Monitor), board and Claude status, recent builds and uploads |
 | Projects | search, the open project's files (tap a file to edit; ⋯ or a long press for rename, move, delete, attach to AI), every project as a card (platform, board, toolchain, last build, last edit) with ⋯ for Open, Project settings, Rename, Duplicate, Backups, Export as zip, Delete; New project, Import a zip file, Clone from Git (and Open a folder with full access) |
 | Editor | full screen, line wrapping, 16 px code so iOS does not zoom; header: back to Files, file name (• when unsaved), Save, ⋯ (Build, Ask AI about this file, Find, Find and replace, Undo, Redo, switch file, close); a row of code keys above the keyboard (Tab, braces, brackets, `;`, `=`, quotes, `<>`, `&`, `|`, `#`, `/`, `_`, Undo, Redo, Find) that keeps the keyboard open |
-| AI Engineer | the conversation in chat bubbles, suggested actions (Create firmware, Explain code, Fix build errors, Improve performance, Review security, Wiring doc, Explain serial output), what the mode allows (tap to change the mode), Claude's steps while it works with Stop, diff review with Apply/Discard (or Keep/Put back), *Try again* after a failure, a composer that grows and stays above the keyboard |
+| AI Engineer | like Claude Code's chat in VS Code: requests in a box, answers as text with their steps (live while Claude works: thinking, each tool with a spinner and its time, the build's progress, a status line with the time and tokens), suggested actions (Create firmware, Explain code, Fix build errors, Improve performance, Review security, Wiring doc, Explain serial output), diff review with Apply/Discard (or Keep/Put back), *Try again* after a failure, *Carry out this plan* after a plan; the composer grows and stays above the keyboard, with ＋ (attach the open file or serial output), the mode (Manual, Auto, Auto + git, Plan), the model, the context ring (tap: Usage) and Send, which becomes Stop; ＋ in the header starts a new conversation |
 | Build | build output, problems (tap opens the file at the line), tests; Build or Stop in the header |
 | Devices | serial monitor, Flash firmware, every connected board (port, USB ID, chipset, driver; Use, Identify chip, Monitor), upload speed and verification, upload history |
 | Serial monitor | port, baud, connect, hex, timestamps, auto-scroll, pause, clear, save, reset board, ask AI, search, send with line ending |

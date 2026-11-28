@@ -313,6 +313,36 @@ class ConnectionTests(WebCase):
         self.assertEqual(sock.recv(10), b"")            # the server hung up
         self.assertLess(time.time() - start, 4)
 
+    def keep_alive(self):
+        conn = http.client.HTTPConnection("127.0.0.1", self.web.port, timeout=10)
+        self.addCleanup(conn.close)
+        base = {"Host": f"127.0.0.1:{self.web.port}", "Cookie": f"mcode_session={self.cookie}",
+                "Content-Type": "application/json"}
+
+        def send(method, path, body=None, extra=None):
+            headers = dict(base, **(extra if extra is not None else {"X-mCode": "1"}))
+            conn.request(method, path, body=json.dumps(body).encode() if body else None,
+                         headers=headers)
+            response = conn.getresponse()
+            return response.status, json.loads(response.read().decode() or "null")
+        return send
+
+    def test_each_request_on_a_kept_alive_connection_has_its_own_body(self):
+        """0.2.0 kept the first request's parsed body for the whole connection: a browser's
+        second POST (an AI request after changing the mode) was read as the first one's."""
+        send = self.keep_alive()
+        self.assertEqual(send("POST", "/api/settings", {"values": {"ui.font_size": 15}})[0], 200)
+        self.assertEqual(send("POST", "/api/settings", {"values": {"ui.font_size": 17}})[0], 200)
+        self.assertEqual(self.studio_.settings.get("ui.font_size"), 17)
+        self.assertEqual(send("GET", "/api/state")[0], 200)
+
+    def test_a_refused_post_does_not_leave_its_body_on_the_connection(self):
+        send = self.keep_alive()
+        status, _ = send("POST", "/api/settings", {"values": {"ui.font_size": 15}}, extra={})
+        self.assertEqual(status, 403)                     # no X-mCode header: refused unread
+        self.assertEqual(send("GET", "/api/state")[0], 200)
+        self.assertEqual(self.studio_.settings.get("ui.font_size"), 14)
+
     def test_event_stream_sockets_drop_vanished_clients(self):
         import socket as _socket
         from app.web.server import STREAM_USER_TIMEOUT_MS, tune_stream_socket

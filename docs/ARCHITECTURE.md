@@ -16,7 +16,7 @@ run.sh → app/main.py
   │         whisplay.py (the only whisplay-daemon client besides the SDK)
   ├─ web/   the desktop IDE: server.py (HTTP + SSE API, access control, roles), sessions.py
   │         (browser sessions, single-use links, pairing), terminal.py, desktop.py, codedrop.py,
-  │         static/ (index.html, app.js, mobile.js, app.css, vendored CodeMirror and xterm.js)
+  │         static/ (index.html, app.js, chat.js, mobile.js, app.css, vendored CodeMirror and xterm.js)
   └─ cli.py the command line
 ```
 
@@ -69,7 +69,9 @@ button hold ─ whisplay-daemon ─ lcd/whisplay.py ─ SDK InputController ─ 
   screen animates (4 fps), and only while mCode has the screen.
 * The browser side is one page with three layouts (phone, tablet, desktop;
   [iPhone and mobile](IOS_MOBILE.md)); `mobile.js` arranges the same views
-  and calls the same API as `app.js`.
+  and calls the same API as `app.js`. `chat.js` is the AI Engineer chat in
+  every layout (steps, composer, mode/model pickers, usage); it only shows
+  what `ai/service.py` publishes and asks the same API.
 * USB hot-plug, the serial monitor reader, the microphone reader, the AI tool
   bridge and the desktop server each have one thread.
 

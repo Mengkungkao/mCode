@@ -31,9 +31,9 @@ shared token of mCode 0.1.x, used once to migrate browsers paired then),
 
 | Key | Default | Allowed | LCD | Full | Meaning |
 |---|---|---|---|---|---|
-| `ai.mode` | `"ask"` | `ask`, `assisted`, `advanced` | yes |  | AI mode. Ask: Claude proposes changes and you approve them. Assisted: Claude edits files and runs builds and tests; tests that run on this device (PlatformIO native, make test) run code Claude wrote, as your user. Advanced: also git through mCode. Flashing, erasing and installing always need your confirmation. |
+| `ai.mode` | `"ask"` | `ask`, `assisted`, `advanced`, `plan` | yes |  | AI mode. Manual: Claude works on a copy and you approve each change. Auto: Claude edits files and runs builds and tests; tests that run on this device (PlatformIO native, make test) run code Claude wrote, as your user. Auto + git: also static analysis and git through mCode. Plan: Claude reads the project and writes a plan; it changes nothing. Flashing, erasing and installing always need your confirmation. |
 | `ai.claude_path` | empty | path |  | yes | Claude Code program. Empty: found automatically (PATH, ~/.local/bin/claude). |
-| `ai.model` | empty | text |  |  | Claude model. Empty: Claude Code's default model. |
+| `ai.model` | empty | text |  |  | Claude model. Empty: Claude Code's default model. An alias (opus, sonnet, haiku, fable) or a model id; your Claude plan decides which models you can use. |
 | `ai.voice_autosend` | `false` | `true`, `false` | yes |  | Send voice requests at once. Off: mCode shows what it heard and waits for you to send it. |
 | `ai.turn_timeout_s` | `1200` | 60–14400 |  |  | AI task time limit (seconds) |
 | `ai.hold_build_scripts` | `true` | `true`, `false` |  | yes | Hold Claude's build-script changes. On: changes Claude makes to CMakeLists.txt, Makefiles, *.cmake, *.mk and Python or shell scripts wait for your OK, and Claude cannot build until you decide. These files run programs on this device when the project is built. Off: they apply like other source files (Assisted and Advanced modes). |

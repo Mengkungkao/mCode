@@ -63,29 +63,34 @@ Every request runs `claude -p` with:
 | Option | Why |
 |---|---|
 | `--restricted` | no shell or code-running tools unless named, file tools confined to the working folder, your user/project Claude settings not loaded |
-| `--tools Read,Edit,Write,Glob,Grep` | the built-in tools (no shell in any mode since 0.2.0) |
+| `--tools Read,Edit,Write,Glob,Grep` | the built-in tools (no shell in any mode since 0.2.0); Plan mode: `Read,Glob,Grep` only |
 | `--permission-mode acceptEdits` | edits inside the working folder need no prompt |
 | `--permission-prompts none` | anything else is refused, not waited for |
 | `--strict-mcp-config --mcp-config …` | only mCode's own tools (below) |
-| `--allowedTools …` | mCode's tools for the mode (and web search in Advanced when allowed) |
+| `--allowedTools …` | mCode's tools for the mode (and web search in Auto + git when allowed) |
+| `--model …` | only when a model is chosen (Settings › *Claude model*, or the model button in the AI Engineer); empty = Claude Code's default |
 | `--append-system-prompt …` | mCode's rules: stay in the project, never claim hardware tests, cite pin sources or mark assumptions, keep docs/WIRING.md current, end with a SUMMARY line |
 
 mCode's tools (an MCP server started for the request, talking to mCode over a
 private socket):
 
-| Tool | Ask | Assisted | Advanced |
-|---|---|---|---|
-| `project_info`, `last_build`, `serial_log`, `list_devices` (read-only) | ✓ | ✓ | ✓ |
-| `build`, `run_tests` (host-side only) | | ✓ | ✓ |
-| `static_check`, `clean` | | | ✓ |
-| `git_status`, `git_diff`, `git_log`, `git_show`, `git_commit` | | | ✓ |
+Modes (setting `ai.mode`; the ids never change, the names follow Claude
+Code's own picker since 0.3.0): Manual = `ask`, Auto = `assisted`,
+Auto + git = `advanced`, Plan = `plan`.
+
+| Tool | Manual | Auto | Auto + git | Plan |
+|---|---|---|---|---|
+| `project_info`, `last_build`, `serial_log`, `list_devices` (read-only) | ✓ | ✓ | ✓ | ✓ |
+| `build`, `run_tests` (host-side only) | | ✓ | ✓ | |
+| `static_check`, `clean` | | | ✓ | |
+| `git_status`, `git_diff`, `git_log`, `git_show`, `git_commit` | | | ✓ | |
 
 There is **no tool to upload, erase, change fuses or install** anything.
 Those are mCode actions that need your confirmation on screen.
 
-Git in Advanced mode is mCode's own (`app/projects/gitutil.py`): it never
+Git in Auto + git mode is mCode's own (`app/projects/gitutil.py`): it never
 runs programs named in the repository's configuration, and Claude's commits
-run without hooks. Before 0.2.0 Advanced mode used `Bash(git …)`, which
+run without hooks. Before 0.2.0 that mode used `Bash(git …)`, which
 honoured the repository's configuration.
 
 `build`, `run_tests`, `static_check` and `clean` refuse to run while the
@@ -96,11 +101,16 @@ started.
 
 ## Changes and approvals
 
-* **Ask before changes**: Claude edits a staging copy
+* **Manual**: Claude edits a staging copy
   (`<data>/workspaces/<project>/stage`). mCode shows the diff; *Apply*
   copies the chosen files into the project after a backup; *Discard* drops
   them.
-* **Assisted / Advanced**: before the request mCode snapshots and backs up
+* **Plan**: Claude reads the same staging copy and has no editing tool; the
+  answer is a plan and never a change (should a file in the copy differ
+  anyway, mCode leaves it out and says so). Plan and Manual continue the
+  same Claude conversation. *Carry out this plan* sends the plan back as a
+  request in Manual or Auto mode.
+* **Auto / Auto + git**: before the request mCode snapshots and backs up
   the project; Claude edits in place; afterwards *Undo* puts the files back.
 * **Held in every mode**: partition tables, `sdkconfig*`, bootloader and
   linker files, `platformio.ini` flash/bootloader/fuse/upload/extra-script
@@ -109,9 +119,9 @@ started.
   submodules, and (while Settings › *Hold Claude's build-script changes* is
   on, the default) build scripts that run on this device when the project is
   built: `CMakeLists.txt`, `*.cmake`, Makefiles, `*.mk`, Python and shell
-  scripts. In Assisted/Advanced mode they are moved out of the project until
+  scripts. In Auto mode they are moved out of the project until
   you *Keep* them.
-* **Git settings**: in Assisted/Advanced mode `.git/config`, `.git/info` and
+* **Git settings**: in Auto and Auto + git mode `.git/config`, `.git/info` and
   `.git/hooks` are put back after the request if Claude changed them; the
   answer says so.
 * After a *Fix the build* request is approved, mCode rebuilds.
@@ -130,3 +140,29 @@ Each project keeps its conversation and Claude session (resumed across
 requests; a lost session starts a new one automatically). *New conversation*
 forgets it. Every request, tool use, change, approval, rejection and undo is
 written to `logs/ai-actions.jsonl` in the data folder (redacted).
+
+## What the chat shows: steps, model and usage
+
+mCode reads Claude Code's `stream-json` events (shapes checked with Claude
+Code 2.1.332 on 2026-11-28) and shows, while the request runs:
+
+* each **step** in order: thinking, every tool with its state (running, done,
+  failed) and time, and Claude's text between the steps. mCode's own tools
+  also show their result line (for example the build's result, redacted);
+  other tools' output (file contents) is not passed to the browser.
+* the **model** Claude Code reports (`init`), and **tokens**: per message
+  (`usage`), the request's totals (`result.usage`) and the model's context
+  window (`result.modelUsage`). *Context* is what the model read for the
+  last message: how full the conversation is.
+* your **plan's limits** from Claude Code's `rate_limit_event`
+  (`unifiedWindows`: the current 5-hour session and the week, each with the
+  part used and when it resets). They arrive with requests; mCode never asks
+  Anthropic itself and never reads Claude Code's login.
+
+`<data>/ai/usage.json` keeps the last limits, the last model and the models'
+context windows: numbers and states only. The context of each project's
+conversations is kept with the conversation (`<data>/ai/<project>/state.json`)
+and forgotten with *New conversation*. The cost Claude Code reports
+(`total_cost_usd`) is shown as cost at API prices when you use a Claude
+subscription (your plan's limits apply instead) and as the API key's cost
+with an API key.

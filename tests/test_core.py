@@ -67,6 +67,7 @@ class SettingsTests(TempCase):
         settings = Settings(None)
         self.assertEqual(settings.cycle("ai.mode"), "assisted")
         self.assertEqual(settings.cycle("ai.mode"), "advanced")
+        self.assertEqual(settings.cycle("ai.mode"), "plan")
         self.assertEqual(settings.cycle("ai.mode"), "ask")
         self.assertTrue(settings.cycle("ai.voice_autosend"))
 

@@ -38,12 +38,12 @@ next to Wi-Fi and battery.
 4. *Claude is working* shows each step (“Editing src/main.cpp”, “Building the
    firmware”). Tap for all steps; 3× stops Claude.
 5. The result:
-   * **N files changed** (Ask mode): *Apply changes*, *View changes* (the diff
+   * **N files changed** (Manual mode): *Apply changes*, *View changes* (the diff
      per file), *Discard*. Applying backs the project up first.
    * **Needs your OK**: a change to the partition table, bootloader/flash/fuse
      settings or the dependency list is held until you keep it.
    * **Done** with Claude's one-line summary: *Build now*, *Read the answer*,
-     *Undo changes* (Assisted/Advanced), *Ask something else*.
+     *Undo changes* (Auto / Auto + git), *Ask something else*.
    * **Not finished** with the reason (usage limit, no network, login
      expired): *Try again*, *Details*.
 
@@ -51,19 +51,23 @@ No microphone or no speech service? Type on a USB/Bluetooth keyboard (any key
 starts a typed request; Enter sends), or use the desktop IDE.
 
 3× opens the **AI menu**: type a request, *Fix the last build*, *Explain
-serial output*, *Review my code*, *Wiring document*, the **mode** (Ask /
-Assisted / Advanced), *Undo Claude's last change*, *New conversation*,
+serial output*, *Review my code*, *Wiring document*, the **mode** (Manual /
+Auto / Auto + git / Plan), *Undo Claude's last change*, *New conversation*,
 *Claude account*.
 
-### The three modes
+### The four modes
+
+The names follow Claude Code's own mode picker (until 0.2.0 they were called
+Ask before changes, Assisted and Advanced; the saved setting is unchanged).
 
 | Mode | Claude may | You |
 |---|---|---|
-| Ask before changes (default) | read and edit a **copy** of the project | approve the diff before anything changes |
-| Assisted | edit the project, **build** and run host **tests** through mCode | review afterwards, *Undo* any time |
-| Advanced | as Assisted, plus static analysis, clean and git through mCode (status, diff, log, show, commit); web search if allowed in Settings | review afterwards, *Undo* any time |
+| Manual (default) | read and edit a **copy** of the project | approve the diff before anything changes |
+| Auto | edit the project, **build** and run host **tests** through mCode | review afterwards, *Undo* any time |
+| Auto + git | as Auto, plus static analysis, clean and git through mCode (status, diff, log, show, commit); web search if allowed in Settings | review afterwards, *Undo* any time |
+| Plan | **read** the project and write a plan; no editing tool, no build | carry the plan out afterwards (*Manual* or *Auto* under the plan) |
 
-In Assisted and Advanced mode, tests that run on this device (PlatformIO
+In Auto and Auto + git mode, tests that run on this device (PlatformIO
 native tests, `make test`) run code Claude wrote, as your user. Changes to
 build scripts and other risky files wait for your OK before anything builds.
 
@@ -185,17 +189,35 @@ bottom panels.
 
 Keys: Ctrl+S save (files also save themselves 1.5 s after you stop typing),
 Ctrl+B build, Ctrl+Space complete, Ctrl+F find, Ctrl+H replace, Ctrl+G go to
-line, Ctrl+/ comment, Ctrl+Q fold, Ctrl+` terminal, Ctrl+Enter send to
-Claude.
+line, Ctrl+/ comment, Ctrl+Q fold, Ctrl+` terminal; in the AI Engineer's
+message box Enter sends, Shift+Enter starts a new line and Shift+Tab
+switches the mode.
 
-The AI panel shows the conversation, Claude's steps while it works (Stop),
-and proposed changes as diffs with a checkbox per file (*Apply selected*,
-*Discard all*). Attach the open file (+ file) or the serial output
-(+ serial) to a request. Suggested actions: Create firmware (fills in
-"Create firmware that …" for you to finish), Explain code, Fix build errors,
-Improve performance, Review security, Wiring doc, Explain serial output.
-The line above the text box says what the current mode lets Claude do; tap
-it to change the mode. A request that failed shows *Try again*.
+The AI Engineer works like Claude Code's chat in VS Code:
+
+* **While Claude works** its answer builds up in the conversation: each
+  step as it happens (thinking, *Reading src/main.cpp*, *Editing …*,
+  *Building the firmware* with the build's progress), its text between the
+  steps, and a status line with what is running, the time and the tokens
+  written so far. The send button becomes **Stop**.
+* **Finished answers** fold their steps into *N steps* (tap to open), and
+  show the model, the time and the tokens. A request that failed or was
+  stopped shows *Try again*. A plan (Plan mode) offers *Carry out this plan:
+  Manual / Auto*.
+* **The bar under the message box:** **＋** attaches the open file or the
+  serial monitor's output; the **mode** (Manual, Auto, Auto + git, Plan;
+  Shift+Tab switches); the **model** (Default, Opus, Sonnet, Haiku, Fable
+  or another model id; your Claude plan decides which you can use); and the
+  **context ring**: how full this conversation is. Tap the ring for
+  **Usage**: your plan's limits as Claude Code reports them with each
+  request (current 5-hour session and this week, with when they reset),
+  this conversation's context, requests, tokens and cost (at API prices
+  with a subscription, where your plan's limits apply instead).
+* Proposed changes appear as diffs with a checkbox per file (*Apply
+  selected*, *Discard all*). Suggested actions: Create firmware (fills in
+  "Create firmware that …" for you to finish), Explain code, Fix build
+  errors, Improve performance, Review security, Wiring doc, Explain serial
+  output. ＋ at the top starts a new conversation.
 
 ## Walk-throughs
 

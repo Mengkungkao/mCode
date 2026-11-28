@@ -18,7 +18,7 @@ library otherwise.
 
 | | |
 |---|---|
-| **AI Engineer** | Claude Code with your own Claude account works on the project's files: creates firmware, explains code, fixes build errors, reviews code, writes wiring docs, analyses serial output. Three modes: *Ask before changes* (review a diff, then apply), *Assisted* (edits and builds, with Undo), *Advanced* (also git). Claude can never flash, erase or install. |
+| **AI Engineer** | Claude Code with your own Claude account works on the project's files: creates firmware, explains code, fixes build errors, reviews code, writes wiring docs, analyses serial output. The chat works like Claude Code's in VS Code: each step as it happens, the mode, the model and your plan's usage at hand. Four modes: *Manual* (review a diff, then apply), *Auto* (edits and builds, with Undo), *Auto + git*, *Plan* (a plan, no changes). Claude can never flash, erase or install. |
 | **Projects** | ESP32, ESP32-S2/S3/C3/C5/C6/H2, Arduino Uno/Mega/Nano/Leonardo/Micro/Due/Nano ESP32, Raspberry Pi Pico, generic C/C++. Arduino CLI, PlatformIO and ESP-IDF layouts, backups before every risky change, git, import/clone/zip. |
 | **Build & Test** | Real compilers through the Arduino CLI, PlatformIO, ESP-IDF or make; problems with file and line; flash/RAM use; host unit tests (`pio test -e native`, `make test`), compile checks, static analysis. |
 | **Hardware** | USB serial boards found from the kernel's own description (VID/PID, driver, serial number), hot-plug without polling, CP210x/CH340/CH9102/FTDI/native USB, esptool chip detection. |

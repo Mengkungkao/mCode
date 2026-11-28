@@ -72,6 +72,7 @@ const S = {
   files: new Map(), active: null, devices: [], selectedPort: "", ai: null, view: store.get("view", "dashboard"),
   jobs: new Map(), outputJob: null, diagnostics: [], monitor: {lines: [], connected: false, paused: false, port: "", baud: 115200, last: 0},
   terms: new Map(), activeTerm: null, attachments: [], boards: null, conversation: [], review: null, turn: null,
+  context: {},
 };
 const BAUDS = [300, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 74880, 115200, 230400, 460800, 921600, 1500000, 2000000];
 
@@ -187,11 +188,8 @@ async function loadSettings() {
   const data = await GET("settings");
   S.fields = data.fields;
   S.settings = Object.fromEntries(data.fields.map((f) => [f.key, f.value]));
-  const mode = $("#ai-mode");
-  mode.innerHTML = "";
-  const field = data.fields.find((f) => f.key === "ai.mode");
-  for (const choice of field.choices) mode.appendChild(h("option", {value: choice, selected: choice === field.value}, field.choice_labels[choice]));
   applyEditorSettings();
+  renderComposer();
 }
 async function loadBoards() { S.boards = await GET("boards"); }
 
@@ -314,6 +312,7 @@ function flushLines() {
 }
 function tickJobStatus() {
   if (typeof renderJobBar === "function") renderJobBar();
+  tickChat();
   const running = Array.from(S.jobs.values()).filter((j) => j.state === "running" || j.state === "queued");
   if (isPhone() && M.view === "build" && (running.length > 0) !== !!tickJobStatus.busy) { tickJobStatus.busy = running.length > 0; renderHeader(); }
   const el = $("#job-status");
@@ -906,158 +905,7 @@ async function renderGit(body) {
   body.appendChild(h("div", {class: "section"}, h("h4", {}, "History"), log.log.map((c) => h("div", {class: "sub"}, `${c.hash} · ${fmtTime(c.time)} · ${c.subject}`))));
 }
 
-// ------------------------------------------------------------------- AI
-function aiStatusBlock() {
-  const ai = S.ai || {};
-  if (ai.state === "not-installed") return h("div", {class: "ai-setup"}, h("h3", {}, "Claude Code is not installed"), h("p", {}, "mCode uses your own Claude Code with your Claude account."), h("button", {class: "btn primary", onclick: () => installTool("claude")}, "Install Claude Code"));
-  if (ai.state === "signed-out") return h("div", {class: "ai-setup"}, h("h3", {}, "Connect your Claude account"), h("p", {}, "Sign in with Claude Code's official browser login. mCode never sees your password or tokens."), h("button", {class: "btn primary", onclick: claudeDialog}, "Connect"));
-  if (!S.project) return h("div", {class: "ai-setup"}, h("h3", {}, "No project open"), h("p", {}, "Claude works inside a project."), h("button", {class: "btn primary", onclick: () => newProjectWizard()}, "New project"));
-  return null;
-}
-async function loadConversation() {
-  if (!S.project || !S.ai || !S.ai.installed) { renderAI(); return; }
-  try { const data = await GET(`ai/${S.project.id}/conversation`); S.conversation = data.conversation; S.review = data.review; S.turn = data.turn && data.turn.project_id === S.project.id ? data.turn : null; } catch (e) { S.conversation = []; }
-  renderAI();
-}
-function md(text) {
-  let s = esc(text || "");
-  const blocks = [];
-  s = s.replace(/```[\w+-]*\n?([\s\S]*?)```/g, (_, code) => { blocks.push(code); return `\u0000${blocks.length - 1}\u0000`; });
-  s = s.replace(/`([^`\n]+)`/g, "<code>$1</code>").replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>").replace(/^#{1,6} (.+)$/gm, "<b>$1</b>");
-  s = s.split(/\n{2,}/).map((para) => {
-    if (/^\s*[-*] /m.test(para)) return "<ul>" + para.split(/\n/).map((l) => l.replace(/^\s*[-*] (.*)$/, "<li>$1</li>")).join("") + "</ul>";
-    if (/^\s*\d+\. /m.test(para)) return "<ol>" + para.split(/\n/).map((l) => l.replace(/^\s*\d+\. (.*)$/, "<li>$1</li>")).join("") + "</ol>";
-    return "<p>" + para.replace(/\n/g, "<br>") + "</p>";
-  }).join("");
-  return s.replace(/\u0000(\d+)\u0000/g, (_, i) => `<pre><code>${blocks[Number(i)]}</code></pre>`);
-}
-const MODE_NOTES = {
-  ask: ["Ask before changes", "Claude works on a copy; you approve each change. No builds."],
-  assisted: ["Assisted", "Claude edits and builds; tests on this device run its code. Undo is there."],
-  advanced: ["Advanced", "Assisted plus static analysis and git commits through mCode."],
-};
-function renderModeNote() {
-  const mode = S.settings["ai.mode"] || "ask";
-  const [name, text] = MODE_NOTES[mode] || ["", ""];
-  const el = $("#ai-mode-note"); el.innerHTML = "";
-  el.append(h("b", {}, name + ": "), text + " Flashing always asks you.");
-}
-async function setAiMode(mode) {
-  try { await POST("settings", {values: {"ai.mode": mode}}); S.settings["ai.mode"] = mode; $("#ai-mode").value = mode; renderModeNote(); toast("AI mode: " + MODE_NOTES[mode][0], "ok"); if (isPhone()) renderHeader(); }
-  catch (e) { fail(e); }
-}
-function renderAI() {
-  renderClaudePill();
-  renderModeNote();
-  const body = $("#ai-body"); body.innerHTML = "";
-  const setup = aiStatusBlock();
-  $("#ai-mode").value = S.settings["ai.mode"] || "ask";
-  if (setup) { body.appendChild(setup); $("#ai-review").classList.add("hidden"); $("#ai-turn").classList.add("hidden"); return; }
-  if (S.ai.memory_warning) body.appendChild(h("div", {class: "msg system warn"}, S.ai.memory_warning));
-  if (S.ai.auth && S.ai.auth.note) body.appendChild(h("div", {class: "msg system warn"}, S.ai.auth.note));
-  if (!S.conversation.length) body.appendChild(h("div", {class: "msg system"}, "Ask Claude to create firmware, explain code, fix the build, write tests or document the wiring. It works on this project's files."));
-  const working = S.turn && S.turn.state === "working";
-  S.conversation.forEach((m, i) => {
-    if (m.role === "user") { body.appendChild(h("div", {class: "msg user"}, m.text, h("div", {class: "meta"}, `${m.source || ""} · ${fmtTime(m.time)}`))); return; }
-    const last = i === S.conversation.length - 1;
-    const asked = S.conversation.slice(0, i).reverse().find((x) => x.role === "user");
-    const retry = last && !working && asked && ["error", "cancelled"].includes(m.state) ?
-      h("button", {class: "btn small retry", onclick: () => aiAsk(asked.kind && asked.kind !== "chat" ? "" : asked.text, asked.kind || "chat")}, "↻ Try again") : null;
-    body.appendChild(h("div", {class: "msg assistant"}, h("div", {html: md(m.text)}), m.summary ? h("div", {class: "summary"}, m.summary) : null,
-      (m.notices || []).map((n) => h("div", {class: "notice"}, "⚠ " + n)), retry,
-      h("div", {class: "meta"}, [m.state, m.changes && m.changes.length ? `${m.changes.length} file(s)` : "", m.cost_usd ? `$${Number(m.cost_usd).toFixed(4)}` : "", fmtTime(m.time)].filter(Boolean).join(" · "))));
-  });
-  body.scrollTop = body.scrollHeight;
-  renderTurn(); renderReview();
-}
-function renderTurn() {
-  const box = $("#ai-turn"); const t = S.turn;
-  const working = t && t.state === "working" && S.project && t.project_id === S.project.id;
-  $("#ai-send").classList.toggle("hidden", !!working);
-  $("#ai-stop").classList.toggle("hidden", !working);
-  if (!working) { box.classList.add("hidden"); return; }
-  box.classList.remove("hidden"); box.innerHTML = "";
-  box.appendChild(h("div", {class: "phase"}, h("span", {class: "spin"}), t.phase, h("span", {class: "muted"}, ` · ${Math.round(t.elapsed || 0)}s`)));
-  (t.activities || []).slice(-8).forEach((a) => box.appendChild(h("div", {class: "step" + (a.error ? " err" : "")}, a.label)));
-  if (t.text) box.appendChild(h("div", {class: "step"}, t.text.slice(-300)));
-}
-function renderDiff(text) {
-  const pre = h("pre", {class: "diff"});
-  for (const line of (text || "").split("\n")) pre.appendChild(h("span", {class: line.startsWith("+") && !line.startsWith("+++") ? "add" : line.startsWith("-") && !line.startsWith("---") ? "del" : line.startsWith("@@") ? "hunk" : ""}, line + "\n"));
-  return pre;
-}
-function renderReview() {
-  const box = $("#ai-review"); const r = S.review;
-  if (!r || !r.changes) { box.classList.add("hidden"); return; }
-  box.classList.remove("hidden"); box.innerHTML = "";
-  const held = r.mode !== "ask";
-  box.appendChild(h("h4", {}, held ? "⚠ Changes on hold — they need your OK" : `✦ Claude proposes ${r.changes.length} change(s)`));
-  if (r.summary) box.appendChild(h("p", {class: "muted"}, r.summary));
-  const picks = new Map();
-  for (const c of r.changes) {
-    const check = h("input", {type: "checkbox", checked: true});
-    picks.set(c.path, check);
-    box.appendChild(h("details", {class: "change"}, h("summary", {}, check, h("b", {}, c.path), h("span", {class: "muted"}, `${c.status} +${c.added} −${c.removed}`)),
-      c.risky && c.risky.length ? h("div", {class: "risk"}, "⚠ " + c.risky.join("; ")) : null, renderDiff(c.diff || "(binary file)")));
-  }
-  const chosen = () => Array.from(picks).filter(([, el]) => el.checked).map(([p]) => p);
-  box.appendChild(h("div", {class: "ai-input-row"},
-    h("button", {class: "btn primary small", onclick: async () => { try { const res = await POST(`ai/${S.project.id}/approve`, {paths: chosen()}); toast(`Applied ${res.applied.length} file(s)`, "ok"); reloadOpenFiles(); loadConversation(); loadProject(S.project.id); } catch (e) { fail(e); } }}, held ? "Keep selected" : "Apply selected"),
-    h("button", {class: "btn danger small", onclick: async () => { try { await POST(`ai/${S.project.id}/reject`); toast(held ? "Put back" : "Discarded"); loadConversation(); } catch (e) { fail(e); } }}, held ? "Put back" : "Discard all"),
-    r.rebuild_after ? h("span", {class: "muted"}, "mCode rebuilds after applying.") : null));
-}
-function onAI(data) {
-  renderClaudePill();
-  if (data.what === "login") { renderLogin(); if (S.ai.login && S.ai.login.state === "done") { toast("Claude connected", "ok"); closeModal(); loadConversation(); } }
-  if (data.what === "status") { renderAI(); renderDashboard(); }
-  if (data.what === "progress") renderTurn();
-  if (["turn", "review", "undo", "conversation"].includes(data.what)) {
-    if (data.what === "turn" && data.turn && data.turn.state !== "working") {
-      const t = data.turn; toast(t.state === "done" ? "Claude: " + (t.summary || "done") : t.state === "review" ? "Claude has changes for you to review" : "Claude: " + (t.error || t.state), t.state === "error" ? "err" : t.state === "done" ? "ok" : "warn", 7000);
-      reloadOpenFiles(); if (S.project) loadProject(S.project.id);
-    }
-    if (data.what === "undo" || data.what === "review") reloadOpenFiles();
-    loadConversation();
-  }
-}
-async function aiSend() {
-  const text = $("#ai-text").value.trim();
-  if (!text && !S.attachments.length) return;
-  await aiAsk(text);
-}
-async function aiAsk(text, kind = "chat") {
-  if (!S.project) { toast("Open a project first.", "warn"); return; }
-  for (const path of S.files.keys()) if (S.files.get(path).dirty) await saveFile(path, true);
-  try {
-    const turn = await POST(`ai/${S.project.id}/ask`, {text, kind, attachments: S.attachments.filter((a) => a.type === "file").map((a) => a.path), include_serial: S.attachments.some((a) => a.type === "serial")});
-    S.turn = turn; $("#ai-text").value = ""; S.attachments = []; renderAttachments(); loadConversation();
-  } catch (e) { fail(e); }
-}
-const AI_PROMPTS = {
-  performance: "Find the biggest speed, memory and power problems in this firmware (blocking delays, heap use, ISR work, busy loops) and propose fixes, most important first.",
-  security: "Review this firmware for security problems: credentials or keys in the code, buffer overflows, unchecked input from serial, Wi-Fi or Bluetooth, OTA updates without verification, debug interfaces left open. List findings first, most serious first; change code only if I ask.",
-};
-function aiKind(kind) {
-  const texts = {"fix-build": "Fix the build errors.", "analyze-serial": "What is happening on the board?", review: "Review this project.", wiring: "Write the wiring document."};
-  const typed = $("#ai-text").value.trim();
-  if (kind === "create") {                     // the user says what to build
-    const box = $("#ai-text");
-    if (!typed) { box.value = "Create firmware that "; box.focus(); box.setSelectionRange(box.value.length, box.value.length); return; }
-    aiAsk(typed); return;
-  }
-  if (kind === "explain") {
-    if (S.active) attach({type: "file", path: S.active});
-    aiAsk(typed || (S.active ? `Explain what ${S.active} does, step by step, for someone new to embedded code.` : "Explain how this project's code works, file by file, for someone new to embedded code."));
-    return;
-  }
-  if (AI_PROMPTS[kind]) { aiAsk(typed ? typed + "\n\n" + AI_PROMPTS[kind] : AI_PROMPTS[kind]); return; }
-  aiAsk(typed || texts[kind], kind);
-}
-function attach(a) { if (!S.attachments.some((x) => x.type === a.type && x.path === a.path)) S.attachments.push(a); renderAttachments(); }
-function renderAttachments() {
-  const box = $("#ai-attachments"); box.innerHTML = "";
-  S.attachments.forEach((a, i) => box.appendChild(h("span", {class: "chip"}, a.type === "serial" ? "serial output" : a.path, h("button", {onclick: () => { S.attachments.splice(i, 1); renderAttachments(); }}, "×"))));
-}
+// The AI Engineer chat is in chat.js.
 
 // ------------------------------------------------------------- Claude login
 function claudeDialog() {
@@ -1411,15 +1259,7 @@ function bindChrome() {
   }));
   $$("#bottom-tabs button[data-panel]").forEach((b) => b.addEventListener("click", () => showPanel(b.dataset.panel)));
   $("#job-cancel").addEventListener("click", () => { const id = $("#job-cancel").dataset.job; if (id) POST(`job/${id}/cancel`).catch(fail); });
-  $("#ai-send").addEventListener("click", aiSend);
-  $("#ai-stop").addEventListener("click", () => POST("ai/cancel").catch(fail));
-  $("#ai-text").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); aiSend(); } });
-  $("#ai-attach-file").addEventListener("click", () => S.active ? attach({type: "file", path: S.active}) : toast("Open a file first.", "warn"));
-  $("#ai-attach-serial").addEventListener("click", () => attach({type: "serial", path: "serial"}));
-  $$("#ai-quick button").forEach((b) => b.addEventListener("click", () => aiKind(b.dataset.kind)));
-  $("#ai-mode").addEventListener("change", () => setAiMode($("#ai-mode").value));
-  $("#ai-mode-note").addEventListener("click", () => (typeof modeSheet === "function" ? modeSheet() : null));
-  $("#ai-new").addEventListener("click", () => S.project && confirmDialog("New conversation?", "Claude forgets this project's conversation (the files stay).", "Start over", () => POST(`ai/${S.project.id}/clear`).then(loadConversation).catch(fail)));
+  bindChat();
   $("#modal-back").addEventListener("click", (e) => { if (e.target.id === "modal-back") closeModal(); });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") { closeModal(); hideMenu(); }

@@ -21,7 +21,7 @@ from mfruit_sdk.input import (BACK, CHAR, ERASE, EXTRA, NEXT, PREVIOUS, SELECT, 
 from mfruit_sdk.ui import Canvas, draw_list, message, text_field
 from mfruit_sdk.ui.theme import CONTENT_BOTTOM, CONTENT_TOP, MARGIN, SCREEN_W
 
-from ..core.config import AI_MODES, FIELD_BY_KEY
+from ..core.config import AI_MODE_SHORT, AI_MODES, FIELD_BY_KEY
 from ..projects import boards
 from ..projects.model import ProjectError
 from ..toolchains import detect
@@ -759,7 +759,7 @@ class AIMenuScreen(ListScreen):
                                   kind="danger", select="undo"))
         mode = studio.settings.get("ai.mode")
         items.append(Item("Mode", lambda: studio.settings.cycle("ai.mode"),
-                          value=AI_MODES[mode].split(" ")[0], select="change"))
+                          value=AI_MODE_SHORT[mode], select="change"))
         if project is not None:
             items.append(Item("New conversation", lambda: ui.push(ConfirmScreen(
                 ui, "AI menu", "Start over?", "Claude forgets this project's conversation.",
@@ -2181,7 +2181,7 @@ class SettingsScreen(ListScreen):
                  value=ai["auth"].get("label") if ai.get("installed") else "Not installed",
                  tone="success" if ai["auth"].get("logged_in") else "warning"),
             Item("AI mode", lambda: s.cycle("ai.mode"),
-                 value=AI_MODES[s.get("ai.mode")].split(" ")[0], select="change"),
+                 value=AI_MODE_SHORT[s.get("ai.mode")], select="change"),
             Item("Send voice at once", lambda: s.cycle("ai.voice_autosend"), kind="toggle",
                  value=s.get("ai.voice_autosend"), select="switch"),
             Item("Sound", lambda: s.cycle("voice.feedback"),

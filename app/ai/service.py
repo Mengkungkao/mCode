@@ -13,6 +13,15 @@ One request ("turn") at a time. A turn:
 6. ends in **review** (changes waiting for approval, or risky changes held),
    **done** (with Undo for in-place changes) or **error**.
 
+Modes (``ai.mode``): Manual (``ask``) and Plan (``plan``) run on a staging
+copy; Plan has no editing tools at all and ends with a plan, never a change.
+Auto (``assisted``) and Auto + git (``advanced``) edit the project in place.
+
+While a turn runs, its ordered steps (text, thinking, each tool with its
+state) and token usage are published so the interfaces can show what is
+running; the plan's usage limits that Claude Code reports are kept in
+``ai/usage.json`` (numbers and states only).
+
 Every request, tool use, change, approval, rejection and undo goes to the AI
 action log (``logs/ai-actions.jsonl``, redacted).
 """
@@ -30,7 +39,7 @@ import uuid
 from typing import Dict, List, Optional
 
 from ..core import storage
-from ..core.config import AI_MODES
+from ..core.config import AI_MODE_SHORT, AI_MODES
 from ..core.history import History
 from ..core.redact import redact
 from ..core.jobs import Job, JobCancelled, JobFailed, JobSpec
@@ -38,7 +47,8 @@ from ..projects.model import Project, ProjectError
 from ..toolchains import detect
 from . import context
 from .bridge import MODE_TOOLS, ToolBridge
-from .claude import ClaudeCli, ClaudeUnavailable, LoginSession, translate
+from .claude import MODEL_CHOICES, TOOL_DETAIL_CHARS, ClaudeCli, ClaudeUnavailable, \
+    LoginSession, translate
 from .workspace import FileChange, Workspace
 
 log = logging.getLogger("mcode.ai")
@@ -47,8 +57,13 @@ MCP_SERVER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcp_serve
 # No shell in any mode: Advanced mode's git is mCode's (bridge.py git_* tools), which never
 # runs programs named in the repository's configuration (gitutil).
 BUILTIN_TOOLS = {"ask": "Read,Edit,Write,Glob,Grep", "assisted": "Read,Edit,Write,Glob,Grep",
-                 "advanced": "Read,Edit,Write,Glob,Grep"}
+                 "advanced": "Read,Edit,Write,Glob,Grep", "plan": "Read,Glob,Grep"}
+STAGED_MODES = ("ask", "plan")          # Claude works on the staging copy
 CONVERSATION_MAX = 80
+STEPS_SENT = 30                         # steps in each progress event
+STEP_TEXT_CHARS = 1500
+THINKING_CHARS = 600
+STEPS_KEPT = 40                         # tool and thinking steps kept with an answer
 
 
 class AIError(Exception):
@@ -81,6 +96,60 @@ class Turn:
         self.session_id = ""
         self.rebuild_after = kind == "fix-build"
         self.notices: List[str] = []    # what mCode did to protect the project
+        self.steps: List[dict] = []     # text, thinking and tools, in order (tools shared
+        #                                 with activities)
+        self.model = ""
+        self.context_tokens = 0         # what the model read last: the conversation's size
+        self.context_window = 0
+        self._usage: Dict[str, dict] = {}   # per message id
+
+    @property
+    def slot(self) -> str:
+        """Which Claude conversation of the project the turn continues."""
+        return "stage" if self.mode in STAGED_MODES else "project"
+
+    def add_usage(self, item: dict) -> None:
+        key = item.get("message_id") or f"m{len(self._usage)}"
+        self._usage[key] = item
+        self.model = item.get("model") or self.model
+        if item.get("context"):
+            self.context_tokens = item["context"]
+
+    def usage(self) -> dict:
+        """Token totals: Claude Code's own for a finished turn, else the messages so far."""
+        final = self.result.get("usage") if self.result else None
+        if final:
+            return dict(final)
+        total = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
+        for item in list(self._usage.values()):     # the job thread may add one
+            for key in total:
+                total[key] += item.get(key, 0)
+        total["context"] = self.context_tokens
+        return total
+
+    def wire_steps(self) -> List[dict]:
+        out = []
+        for step in self.steps[-STEPS_SENT:]:
+            if step["type"] == "text":
+                text = step["text"]
+                out.append({"type": "text", "text": text if len(text) <= STEP_TEXT_CHARS
+                            else "…" + text[-STEP_TEXT_CHARS:]})
+            elif step["type"] == "thinking":
+                out.append({"type": "thinking", "text": step["text"][:THINKING_CHARS]})
+            else:
+                out.append(dict(step))
+        return out
+
+    def kept_steps(self) -> List[dict]:
+        """What the conversation keeps with the answer: tools and thinking, not the text."""
+        out = []
+        for step in self.steps:
+            if step["type"] == "tool":
+                out.append({"type": "tool", "label": step["label"], "state": step.get("state", ""),
+                            "detail": step.get("detail", "")})
+            elif step["type"] == "thinking":
+                out.append({"type": "thinking", "text": step["text"][:THINKING_CHARS]})
+        return out[-STEPS_KEPT:]
 
     @property
     def text(self) -> str:
@@ -101,7 +170,10 @@ class Turn:
                 "changes": self.changes, "held": self.held, "applied": self.applied,
                 "cost_usd": self.result.get("cost_usd"), "turns": self.result.get("turns"),
                 "denials": self.result.get("denials", []), "job_id": self.job_id,
-                "rebuild_after": self.rebuild_after, "notices": self.notices}
+                "rebuild_after": self.rebuild_after, "notices": self.notices,
+                "steps": self.wire_steps(), "model": self.model, "usage": self.usage(),
+                "context": self.context_tokens, "context_window": self.context_window,
+                "slot": self.slot}
 
 
 class ProjectAI:
@@ -115,12 +187,15 @@ class ProjectAI:
         self.conversation: List[dict] = data.get("conversation", [])
         self.review: Optional[dict] = data.get("review")
         self.last_turn: Optional[dict] = data.get("last_turn")
+        # per conversation slot: {"tokens", "window", "model", "time"}
+        context = data.get("context")
+        self.context: Dict[str, dict] = context if isinstance(context, dict) else {}
 
     def save(self) -> None:
         os.makedirs(self.folder, mode=0o700, exist_ok=True)
         storage.atomic_write_json(self.path, {
             "sessions": self.sessions, "conversation": self.conversation[-CONVERSATION_MAX:],
-            "review": self.review, "last_turn": self.last_turn})
+            "review": self.review, "last_turn": self.last_turn, "context": self.context})
 
     def add(self, role: str, text: str, **extra) -> dict:
         entry = {"role": role, "text": text, "time": time.time()}
@@ -144,6 +219,15 @@ class AIService:
         self.turn: Optional[Turn] = None
         self._projects: Dict[str, ProjectAI] = {}
         self._bridge_started = False
+        # What Claude Code last reported about the plan's limits, the model it used and the
+        # models' context windows (ai/usage.json: numbers and states only).
+        self._usage_path = os.path.join(studio.paths.data, "ai", "usage.json")
+        saved = storage.read_json(self._usage_path, {}, dict)
+        self.limits: dict = saved.get("limits") if isinstance(saved.get("limits"), dict) else {}
+        self.last_model = str(saved.get("last_model") or "")[:100]
+        windows = saved.get("windows")
+        self.windows: Dict[str, int] = {str(k)[:100]: v for k, v in (
+            windows.items() if isinstance(windows, dict) else []) if isinstance(v, int)}
 
     # ------------------------------------------------------------- lifecycle
     def start(self) -> None:
@@ -199,8 +283,13 @@ class AIService:
         return {"state": state, "installed": tool.found, "version": tool.version,
                 "source": tool.source, "problem": tool.problem if not tool.found else "",
                 "hint": tool.hint if not tool.found else "", "auth": auth, "mode": mode,
-                "mode_label": AI_MODES.get(mode, mode), "memory_warning": warning,
-                "login": self._login_dict(),
+                "mode_label": AI_MODES.get(mode, mode), "mode_short": AI_MODE_SHORT.get(mode, mode),
+                "modes": [{"id": key, "label": label, "short": AI_MODE_SHORT[key]}
+                          for key, label in AI_MODES.items()],
+                "model": self.studio.settings.get("ai.model"),
+                "models": [{"id": key, "label": label} for key, label in MODEL_CHOICES],
+                "last_model": self.last_model, "limits": self.limits,
+                "memory_warning": warning, "login": self._login_dict(),
                 "turn": turn.to_dict() if turn else None}
 
     def refresh_status(self, wait: bool = False) -> dict:
@@ -342,7 +431,7 @@ class AIService:
             self.turn = turn
         workspace = self._workspace(project)
         try:
-            if mode == "ask":
+            if mode in STAGED_MODES:
                 workdir = workspace.prepare_stage()
             else:
                 workspace.snapshot()
@@ -433,11 +522,11 @@ class AIService:
 
     def _run(self, job: Job, turn: Turn, project: Project, workdir: str, prompt: str) -> dict:
         pai = self.project_ai(project.id)
-        slot = "stage" if turn.mode == "ask" else "project"
+        slot = turn.slot
         workspace = self._workspace(project)
         # In place, the turn's own risky edits must not reach a build before the user
         # decides (the hold rule otherwise only runs after the turn).
-        guard = workspace.pending_reason if turn.mode != "ask" else None
+        guard = workspace.pending_reason if turn.mode not in STAGED_MODES else None
         token = self.bridge.open_turn(project.id, turn.mode,
                                       on_tool=lambda tool: self._tool_called(turn, tool),
                                       guard=guard)
@@ -503,11 +592,18 @@ class AIService:
             kind = item["kind"]
             if kind == "text":
                 turn.texts.append(item["text"])
+                turn.steps.append({"type": "text", "text": item["text"]})
                 turn.phase = "Writing the answer"
+            elif kind == "thinking":
+                turn.steps.append({"type": "thinking", "text": item["text"][:THINKING_CHARS * 4]})
+                turn.phase = "Thinking"
             elif kind == "tool":
-                entry = {"label": item["label"], "name": item["name"], "file": item.get("file", ""),
-                         "time": time.time(), "id": item.get("id", ""), "error": False}
+                entry = {"type": "tool", "label": item["label"], "name": item["name"],
+                         "file": item.get("file", ""), "time": time.time(),
+                         "id": item.get("id", ""), "error": False, "state": "running",
+                         "ended": 0.0, "detail": ""}
                 turn.activities.append(entry)
+                turn.steps.append(entry)
                 turn.phase = item["label"]
                 self.log.add("tool", project_id=turn.project_id, turn=turn.id, tool=item["name"],
                              label=item["label"])
@@ -515,12 +611,49 @@ class AIService:
                 for entry in reversed(turn.activities):
                     if entry.get("id") == item["id"]:
                         entry["error"] = item["error"]
+                        entry["state"] = "error" if item["error"] else "done"
+                        entry["ended"] = time.time()
+                        # mCode's own tools say what happened (build result); other tools'
+                        # output (file contents) stays out of the events.
+                        if item["error"] or str(entry.get("name", "")).startswith("mcp__mcode__"):
+                            entry["detail"] = redact(item.get("text") or "")[:TOOL_DETAIL_CHARS]
                         break
+            elif kind == "usage":
+                turn.add_usage(item)
+                if not turn.context_window and turn.model in self.windows:
+                    turn.context_window = self.windows[turn.model]
+            elif kind == "limits":
+                self._limits_reported(item)
             elif kind == "result":
                 turn.result = item
+                for name, data in (item.get("models") or {}).items():
+                    if data.get("context_window"):
+                        self.windows[name] = data["context_window"]
+                if turn.model in self.windows:
+                    turn.context_window = self.windows[turn.model]
             elif kind == "init":
                 turn.session_id = item.get("session_id") or turn.session_id
+                turn.model = item.get("model") or turn.model
+                if turn.model in self.windows:
+                    turn.context_window = self.windows[turn.model]
         self._publish("progress", turn=turn.to_dict())
+
+    def _limits_reported(self, item: dict) -> None:
+        limits = {k: v for k, v in item.items() if k != "kind"}
+        changed = limits != {k: v for k, v in self.limits.items() if k != "time"}
+        limits["time"] = time.time()
+        self.limits = limits
+        if changed:
+            self._publish("usage")
+
+    def _save_usage(self) -> None:
+        try:
+            os.makedirs(os.path.dirname(self._usage_path), mode=0o700, exist_ok=True)
+            storage.atomic_write_json(self._usage_path, {
+                "limits": self.limits, "last_model": self.last_model,
+                "windows": dict(list(self.windows.items())[-20:])})
+        except OSError as exc:
+            log.warning("could not save AI usage: %s", exc)
 
     def _tool_called(self, turn: Turn, tool: str) -> None:
         turn.phase = {"build": "Building the firmware", "run_tests": "Running the tests",
@@ -532,8 +665,16 @@ class AIService:
         workspace = self._workspace(project)
         turn.ended = time.time()
         try:
-            if turn.mode == "ask":
+            if turn.mode in STAGED_MODES:
                 changes = workspace.staged_changes() if job.state in ("succeeded",) else []
+                if turn.mode == "plan" and changes:
+                    # Plan mode has no editing tool; should a file differ anyway, the plan
+                    # still changes nothing (the staging copy is prepared again next time).
+                    turn.notices.append(f"Plan mode changes nothing: mCode left out "
+                                        f"{len(changes)} file(s) that differed in Claude's copy.")
+                    log.warning("%s: plan turn %s left %d changed file(s) in the stage",
+                                project.name, turn.id, len(changes))
+                    changes = []
                 turn.changes = [c.to_dict() for c in changes]
                 if changes:
                     pai.review = {"turn": turn.id, "mode": "ask", "created": time.time(),
@@ -569,12 +710,22 @@ class AIService:
             turn.state = "error"
             turn.error = turn.error or job.error or "Claude could not finish."
         text = turn.text
+        if turn.model:
+            self.last_model = turn.model
+        if turn.context_tokens:
+            pai.context[turn.slot] = {"tokens": turn.context_tokens,
+                                      "window": turn.context_window, "model": turn.model,
+                                      "time": turn.ended}
         pai.add("assistant", context.strip_summary(text) or turn.error, summary=turn.summary,
                 turn=turn.id, state=turn.state, changes=[c["path"] for c in turn.changes],
                 activities=[a["label"] for a in turn.activities][-20:],
-                cost_usd=turn.result.get("cost_usd"), notices=turn.notices)
+                cost_usd=turn.result.get("cost_usd"), notices=turn.notices, mode=turn.mode,
+                steps=turn.kept_steps(), model=turn.model, usage=turn.usage(),
+                context=turn.context_tokens, context_window=turn.context_window,
+                duration=round(turn.ended - turn.started, 1))
         pai.last_turn = turn.to_dict()
         pai.save()
+        self._save_usage()
         self.log.add("result", project_id=project.id, turn=turn.id, state=turn.state,
                      notices=turn.notices,
                      summary=turn.summary, error=turn.error,
@@ -682,10 +833,15 @@ class AIService:
     def conversation(self, project: Project) -> List[dict]:
         return list(self.project_ai(project.id).conversation)
 
+    def context_of(self, project: Project) -> Dict[str, dict]:
+        """How full each of the project's Claude conversations is (per slot)."""
+        return dict(self.project_ai(project.id).context)
+
     def clear_conversation(self, project: Project) -> None:
         pai = self.project_ai(project.id)
         pai.conversation = []
         pai.sessions = {}
+        pai.context = {}
         pai.save()
         self.log.add("new-conversation", project_id=project.id)
         self._publish("conversation")

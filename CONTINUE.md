@@ -5,13 +5,59 @@ embedded development studio, in `/home/meng/mCode` as an mFruit OS app (id
 `mcode`), Whisplay-first (second brief: "Whisplay HAT First UI/UX Redesign"),
 with a desktop IDE for HDMI. mFruit OS itself is not changed. The owner
 commits and pushes; commit bodies are dot points with **no co-author or agent
-lines**. Repository `github.com/Mengkungkao/mCode`; releases up to v0.1.8 are
-published. 0.2.0 is in the working tree, not committed (see the 2026-11-28
+lines**. Repository `github.com/Mengkungkao/mCode`; 0.2.0 is committed
+(`3009a81`). 0.3.0 is in the working tree, not committed (see the first
 session below).
 
 Read first: [docs/IMPLEMENTATION_REPORT.md](docs/IMPLEMENTATION_REPORT.md)
 (inspection, decisions, plan), then [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 Evidence: [docs/records/2026-11-27-dev-machine.md](docs/records/2026-11-27-dev-machine.md).
+
+## Session 2026-11-28 (later: AI Engineer like Claude Code in VS Code → 0.3.0)
+
+Owner's request: make the AI Engineer chat follow Claude Code's chat in VS
+Code (set auto/manual, see usage, change model, show what is running), and
+on the phone put the header title on the left (Home shows *mCode Studio*,
+Projects shows *Projects*). **Not committed**; manifest is 0.3.0, so pushing
+publishes v0.3.0. Evidence: [record](docs/records/2026-11-28-ai-chat-0.3.0.md).
+
+Done:
+- Modes renamed after Claude Code's picker (ids unchanged in settings):
+  Manual (`ask`), Auto (`assisted`), Auto + git (`advanced`), and a new
+  **Plan** (`plan`): staging copy, `--tools Read,Glob,Grep`, read-only mCode
+  tools, never a review; *Carry out this plan* (Manual/Auto) sends the plan
+  back. LCD shows the short names (`AI_MODE_SHORT`).
+- Claude Code's stream now gives the chat: ordered steps (text, thinking,
+  tools with state and time; mCode tools' result line, redacted), the
+  model, token usage, context window, and the plan's limits from
+  `rate_limit_event` (shape read from Claude Code 2.1.332's binary and one
+  tiny real Haiku request on the dev machine: `utilization` is a fraction).
+  Kept in `<data>/ai/usage.json` (numbers and states only) and per
+  conversation slot in `state.json` (`context`).
+- `ai.model` validated (`MODEL_PATTERN`: no leading `-`); composer model
+  picker (Default, Opus, Sonnet, Haiku, Fable, other id).
+- New `app/web/static/chat.js` (loaded before app.js; the AI section moved
+  out of app.js): Claude Code style messages, live answer with steps and a
+  ticking status line, composer with ＋ attach, mode (Shift+Tab cycles),
+  model, context ring → Usage panel, Send/Stop; popovers on a computer,
+  sheets on the phone; Enter sends on a computer.
+- Phone header: bold title on the left; pages no longer repeat it as a large
+  title. Settings page: AI mode, Claude model, Usage rows.
+- **A-19 (0.2.0 regression, fixed):** the web server reused the first
+  POST's body for later POSTs on a kept-alive connection (found when *send*
+  after a mode change arrived empty). **A-20:** a POST refused before its
+  body was read corrupted the next request; such answers now close the
+  connection. Both with regression tests and negative controls.
+- Tests 211 → 218; `bash tools/check.sh` passes (11 checks).
+
+Next:
+1. Review and commit (suggested subject `feat: mCode Studio 0.3.0, AI
+   Engineer like Claude Code: modes, model, usage, live steps`), push →
+   v0.3.0 (it also carries the A-19 fix for 0.2.0).
+2. One small real request in each of Plan and Auto on a board or the dev
+   machine; check the Usage panel against claude.ai's own usage page.
+3. The iPhone checks of 0.2.0 still stand, plus the composer above the
+   keyboard and the mode/model sheets.
 
 ## Session 2026-11-28 (mCode Studio 2.0 directive → 0.2.0)
 
@@ -116,6 +162,7 @@ Statuses: NOT IMPLEMENTED · IMPLEMENTED · SOFTWARE TESTED · HARDWARE VERIFIED
 | Desktop IDE security (sessions, roles, single-use links, pairing window, host, origin, CSRF) | IMPLEMENTED (0.2.0) | SOFTWARE TESTED | LCD pairing screen NOT VERIFIED on a real display |
 | Phone and tablet layouts (iOS design, tab bar, sheets, keyboard-aware) | IMPLEMENTED (0.2.0) | headless Chromium (iPhone 13, tablet, desktop viewports) | real iPhone Safari NOT VERIFIED |
 | AI build-tool refusal, git tools, `.git` restore | IMPLEMENTED (0.2.0) | SOFTWARE TESTED (fake CLI, real MCP server) | N/A |
+| AI chat like Claude Code (steps, Plan mode, model, usage limits) | IMPLEMENTED (0.3.0) | SOFTWARE TESTED (fake CLI with 2.1.332 event shapes; headless Chromium with a scripted CLI); event shapes from one real Haiku request | a real Claude request through the new chat NOT VERIFIED; iPhone NOT VERIFIED |
 | Firmware checksum re-check, build/upload lock | IMPLEMENTED (0.2.0) | SOFTWARE TESTED (fake uploader) | NOT VERIFIED |
 | Release package | IMPLEMENTED | built and checked locally (560 KB) | release workflow NOT RUN (no repo) |
 
