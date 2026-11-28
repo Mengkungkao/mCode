@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import pty
+import threading
 import time
 import tty
 import unittest
@@ -250,6 +251,23 @@ class SerialTests(TempCase):
         monitor.set_paused(True)
         self.assertTrue(monitor.status()["paused"])
 
+    def test_lines_received_while_paused_arrive_on_resume(self):
+        """A-09: the batch was dropped while paused and the browser never saw it."""
+        master, path = self.pty_pair()
+        events = []
+        monitor = SerialMonitor(PortCoordinator(), os.path.join(self.tmp, "logs"),
+                                publish=lambda t, d: events.append((t, d)))
+        self.addCleanup(monitor.close_all)
+        monitor.connect(path, 115200)
+        monitor.set_paused(True)
+        monitor._last_publish = -1e9        # past the 0.1 s batching: published at once
+        os.write(master, b"while paused\n")
+        self.assertTrue(wait_for(lambda: any(l.text == "while paused" for l in monitor.lines)))
+        published = lambda: [l["text"] for t, d in events if t == "monitor" for l in d["lines"]]
+        self.assertNotIn("while paused", published())
+        monitor.set_paused(False)
+        self.assertIn("while paused", published())
+
     def test_suspend_and_resume_for_upload(self):
         master, path = self.pty_pair()
         ports = PortCoordinator()
@@ -352,6 +370,85 @@ class UploadTests(TempCase):
         with self.assertRaises(ProjectError) as caught:
             studio.uploads.start(plan.token, confirmed=True)
         self.assertIn("changed", str(caught.exception))
+
+    def test_build_waits_for_the_upload_of_its_project(self):
+        """A-03: a rebuild during a flash rewrote the firmware esptool was reading."""
+        studio, project = self.ready()
+        studio.jobs.wait(studio.builds.run(project, "build").id, 30)
+        os.environ["FAKE_UPLOAD_SLOW"] = "1.5"
+        self.addCleanup(os.environ.pop, "FAKE_UPLOAD_SLOW", None)
+        plan = studio.uploads.prepare(project, os.path.join(self.tmp, "dev", "ttyACM0"))
+        upload = studio.uploads.start(plan.token, confirmed=True)
+        self.assertTrue(wait_for(lambda: upload.phase not in ("Waiting", "Starting")))
+        build = studio.builds.run(project, "rebuild")
+        self.assertEqual(build.state, "queued")
+        # While the build waits, a new flash is refused with the reason.
+        refused = studio.uploads.prepare(project, os.path.join(self.tmp, "dev", "ttyACM0"))
+        self.assertFalse(refused.ok)
+        self.assertTrue(any("is running" in c.message for c in refused.checks if not c.ok))
+        studio.jobs.wait(upload.id, 30)
+        studio.jobs.wait(build.id, 30)
+        self.assertTrue(upload.ok, upload.error + upload.output())
+        self.assertTrue(build.ok, build.error)
+        self.assertGreaterEqual(build.started, upload.ended)
+
+    def test_firmware_rebuilt_after_confirmation_is_refused(self):
+        """A-04: the confirmed bytes are flashed, never a newer build at the same path."""
+        from app.core.jobs import JobSpec
+        from app.toolchains.builds import project_lock
+        studio, project = self.ready()
+        studio.jobs.wait(studio.builds.run(project, "build").id, 30)
+        port = os.path.join(self.tmp, "dev", "ttyACM0")
+        plan = studio.uploads.prepare(project, port)
+        self.assertEqual(len(plan.firmware_sha256), 64)
+        artifact = os.path.join(project.path, plan.firmware)
+        # 1. Changed between confirming and starting: start refuses.
+        with open(artifact, "ab") as handle:
+            handle.write(b"new")
+        with self.assertRaises(ProjectError) as caught:
+            studio.uploads.start(plan.token, confirmed=True)
+        self.assertIn("changed after you confirmed", str(caught.exception))
+        # 2. Changed while the upload waited for the project: nothing is written.
+        log_file = os.path.join(self.tmp, "tool.log")
+        os.environ["FAKE_TOOL_LOG"] = log_file
+        self.addCleanup(os.environ.pop, "FAKE_TOOL_LOG", None)
+        gate = threading.Event()
+        blocker = studio.jobs.submit(JobSpec(kind="hold", title="hold", func=lambda j: gate.wait(10),
+                                             lane="tool", locks=[project_lock(project.id)]))
+        plan = studio.uploads.prepare(project, port)
+        job = studio.uploads.start(plan.token, confirmed=True)
+        self.assertEqual(job.state, "queued")
+        with open(artifact, "ab") as handle:
+            handle.write(b"newer")
+        gate.set()
+        studio.jobs.wait(blocker.id, 10)
+        studio.jobs.wait(job.id, 30)
+        self.assertFalse(job.ok)
+        self.assertIn("Nothing was written", job.error)
+        if os.path.exists(log_file):
+            with open(log_file) as handle:
+                self.assertNotIn('"upload"', handle.read())
+
+    def test_monitor_resumes_when_the_port_is_busy(self):
+        """A-10: the port hand-over failed outside the try that resumes the monitor."""
+        from app.hardware.ports import PortBusy as Busy
+        studio, project = self.ready()
+        studio.jobs.wait(studio.builds.run(project, "build").id, 30)
+        port = os.path.join(self.tmp, "dev", "ttyACM0")
+        plan = studio.uploads.prepare(project, port)
+        resumed = []
+        studio.monitor.suspend = lambda p: True
+        studio.monitor.resume = lambda present=None: resumed.append(True)
+
+        def busy(p, owner):
+            raise Busy(p, "another program")
+
+        studio.ports.acquire = busy
+        job = studio.uploads.start(plan.token, confirmed=True)
+        studio.jobs.wait(job.id, 30)
+        self.assertFalse(job.ok)
+        self.assertIn("in use", job.error)
+        self.assertEqual(resumed, [True])
 
     def test_failed_upload_is_explained(self):
         studio, project = self.ready()

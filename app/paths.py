@@ -84,7 +84,16 @@ class Paths:
 
     @property
     def web_token_file(self) -> str:
+        """The shared token of mCode 0.1.x (kept so browsers paired then can migrate)."""
         return self._p("web-token")
+
+    @property
+    def web_sessions_file(self) -> str:
+        return self._p("web-sessions.json")
+
+    @property
+    def security_log(self) -> str:
+        return self._p("logs", "security.jsonl")
 
     @property
     def logs(self) -> str:

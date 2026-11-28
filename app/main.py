@@ -65,9 +65,11 @@ def run_desktop(args) -> int:
         print("The desktop IDE could not start (is the port in use?).", file=sys.stderr)
         studio.stop()
         return 1
-    print(f"{APP_NAME} {VERSION}\nDesktop IDE: {web.local_url()}")
-    for url in web.urls(with_token=False)[1:] if studio.settings.get("web.lan") else []:
-        print(f"  on the network: {url}  (pairing code {web.pair_code()})")
+    print(f"{APP_NAME} {VERSION}\nDesktop IDE: {web.local_url()}\n"
+          "  (a single-use link with full access, valid for 10 minutes)")
+    for url in web.urls(lan_only=True) if studio.settings.get("web.lan") else []:
+        print(f"  on the network: {url}  (pair a phone or computer from Settings › Security "
+              "in a browser with full access)")
     print("Ctrl+C stops mCode.")
     stop = threading.Event()
     _wait_for_signal(stop)

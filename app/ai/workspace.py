@@ -15,8 +15,18 @@ can stop a board from booting or pull in new code: partition tables,
 bootloader/flash/fuse settings (sdkconfig, partitions.csv, platformio.ini
 ``board_build.*``/``board_fuses.*``/``upload_flags``, linker scripts) and
 dependency lists (platformio.ini ``lib_deps``, ``idf_component.yml``,
-``sketch.yaml``). In Assisted/Advanced mode those files are put back to their
-old content unless the user keeps them.
+``sketch.yaml``), git attributes (they can make git run programs) and, while
+``ai.hold_build_scripts`` is on, build scripts that run on this device when
+the project is built (``CMakeLists.txt``, ``*.cmake``, ``Makefile``, ``*.mk``,
+Python and shell scripts such as PlatformIO's ``extra_scripts``). In
+Assisted/Advanced mode those files are put back to their old content unless
+the user keeps them, and mCode's build tools refuse to run for Claude while
+such a change is waiting (:meth:`Workspace.pending_reason`).
+
+``.git`` is not part of the source tree, but its settings can name programs:
+in Assisted/Advanced mode ``.git/config``, ``.git/info`` and ``.git/hooks``
+are copied before the turn and put back if Claude changed them
+(:meth:`Workspace.restore_git`).
 """
 
 from __future__ import annotations
@@ -40,6 +50,12 @@ RISKY_FILES = [
     ("*bootloader*", "bootloader"), ("*.ld", "linker script (memory layout)"),
     ("boards.local.txt", "board definition"), ("boards.txt", "board definition"),
 ]
+BUILD_SCRIPTS = ["CMakeLists.txt", "*.cmake", "Makefile", "makefile", "GNUmakefile", "*.mk",
+                 "*.py", "*.sh"]
+BUILD_SCRIPT_REASON = "build script (runs on this device when the project is built)"
+GIT_FILES = [(".gitattributes", "git attributes (can make git run programs)"),
+             (".gitmodules", "git submodules (fetch code from elsewhere)")]
+GIT_STATE = ("config", "info", "hooks")         # inside .git: snapshotted, put back
 DEPENDENCY_FILES = [("idf_component.yml", "ESP-IDF components"),
                     ("dependencies.lock", "ESP-IDF component lock"),
                     ("library.json", "library manifest"), ("sketch.yaml", "Arduino profile")]
@@ -87,12 +103,15 @@ def _text(data: Optional[bytes]) -> Optional[str]:
         return None
 
 
-def classify(path: str, old: Optional[str], new: Optional[str]) -> List[str]:
+def classify(path: str, old: Optional[str], new: Optional[str],
+             build_scripts: bool = True) -> List[str]:
     name = os.path.basename(path)
     reasons = []
-    for pattern, reason in RISKY_FILES:
+    for pattern, reason in RISKY_FILES + GIT_FILES:
         if fnmatch.fnmatch(name, pattern) and reason not in reasons:
             reasons.append(reason)
+    if build_scripts and any(fnmatch.fnmatch(name, pattern) for pattern in BUILD_SCRIPTS):
+        reasons.append(BUILD_SCRIPT_REASON)
     for pattern, reason in DEPENDENCY_FILES:
         if fnmatch.fnmatch(name, pattern):
             reasons.append(f"dependencies ({reason})")
@@ -123,7 +142,8 @@ def _section_changed(old: Optional[str], new: Optional[str], key: str) -> bool:
     return deps(old) != deps(new)
 
 
-def compare(before_root: str, after_root: str, paths: Optional[Iterable[str]] = None) -> List[FileChange]:
+def compare(before_root: str, after_root: str, paths: Optional[Iterable[str]] = None,
+            build_scripts: bool = True) -> List[FileChange]:
     """Source files that differ between two trees."""
     before = set(pfiles.walk_sources(before_root)) if os.path.isdir(before_root) else set()
     after = set(pfiles.walk_sources(after_root)) if os.path.isdir(after_root) else set()
@@ -148,7 +168,7 @@ def compare(before_root: str, after_root: str, paths: Optional[Iterable[str]] = 
             text = "".join(l if l.endswith("\n") else l + "\n" for l in diff)
             change.diff = text[:MAX_DIFF_CHARS] + ("\n… (diff truncated)\n" if len(text) >
                                                    MAX_DIFF_CHARS else "")
-        change.risky = classify(rel, old_text, new_text)
+        change.risky = classify(rel, old_text, new_text, build_scripts)
         changes.append(change)
     return changes
 
@@ -169,11 +189,13 @@ def copy_file(src_root: str, dst_root: str, rel: str) -> None:
 class Workspace:
     """The staging copy and the before-turn snapshot of one project."""
 
-    def __init__(self, root: str, project_path: str):
+    def __init__(self, root: str, project_path: str, hold_build_scripts: bool = True):
         self.root = root
         self.project_path = project_path
+        self.hold_build_scripts = hold_build_scripts
         self.stage = os.path.join(root, "stage")
         self.before = os.path.join(root, "before")
+        self.before_git = os.path.join(root, "before-git")
 
     def prepare_stage(self) -> str:
         """Reset the staging copy to the project's current source."""
@@ -182,13 +204,88 @@ class Workspace:
 
     def snapshot(self) -> str:
         pfiles.copy_sources(self.project_path, self.before)
+        self.snapshot_git()
         return self.before
 
     def staged_changes(self) -> List[FileChange]:
-        return compare(self.project_path, self.stage)
+        return compare(self.project_path, self.stage, build_scripts=self.hold_build_scripts)
 
     def applied_changes(self) -> List[FileChange]:
-        return compare(self.before, self.project_path)
+        return compare(self.before, self.project_path, build_scripts=self.hold_build_scripts)
+
+    def pending_reason(self) -> str:
+        """Why a build must wait for the user, or "" (in-place modes, during the turn)."""
+        held = sorted({c.path for c in self.applied_changes() if c.risky})
+        reasons = []
+        if held:
+            reasons.append("these changes need the user's approval first: " + ", ".join(held[:8])
+                           + (" …" if len(held) > 8 else ""))
+        if self.git_changed():
+            reasons.append("the project's git settings (.git) were changed")
+        if not reasons:
+            return ""
+        return "; ".join(reasons) + ". Finish your answer; the user reviews the changes in " \
+                                    "mCode and builds afterwards."
+
+    # ------------------------------------------------------------ .git state
+    def _git_files(self, root: str) -> Dict[str, bytes]:
+        out: Dict[str, bytes] = {}
+        for name in GIT_STATE:
+            base = os.path.join(root, name)
+            if os.path.isfile(base) and not os.path.islink(base):
+                out[name] = _read(base) or b""
+            elif os.path.isdir(base) and not os.path.islink(base):
+                for folder, _dirs, files in os.walk(base):
+                    for item in files:
+                        full = os.path.join(folder, item)
+                        if os.path.islink(full) or not os.path.isfile(full):
+                            continue
+                        rel = os.path.relpath(full, root)
+                        mode = os.stat(full).st_mode & 0o777
+                        out[rel] = (_read(full) or b"") + f"\0mode={mode:o}".encode()
+        return out
+
+    def snapshot_git(self) -> None:
+        shutil.rmtree(self.before_git, ignore_errors=True)
+        git_dir = os.path.join(self.project_path, ".git")
+        if not os.path.isdir(git_dir) or os.path.islink(git_dir):
+            return
+        os.makedirs(self.before_git, mode=0o700)
+        for name in GIT_STATE:
+            source = os.path.join(git_dir, name)
+            target = os.path.join(self.before_git, name)
+            if os.path.islink(source):
+                continue
+            if os.path.isdir(source):
+                shutil.copytree(source, target, symlinks=True)
+            elif os.path.isfile(source):
+                shutil.copy2(source, target)
+        with open(os.path.join(self.before_git, ".taken"), "w") as handle:
+            handle.write("1\n")
+
+    def git_changed(self) -> bool:
+        git_dir = os.path.join(self.project_path, ".git")
+        if not os.path.exists(os.path.join(self.before_git, ".taken")):
+            return False            # no repository before the turn: nothing to compare
+        return self._git_files(git_dir) != self._git_files(self.before_git)
+
+    def restore_git(self) -> bool:
+        """Put ``.git/config``, ``info`` and ``hooks`` back; True if they had changed."""
+        if not self.git_changed():
+            return False
+        git_dir = os.path.join(self.project_path, ".git")
+        for name in GIT_STATE:
+            current = os.path.join(git_dir, name)
+            saved = os.path.join(self.before_git, name)
+            if os.path.islink(current) or os.path.isfile(current):
+                os.unlink(current)
+            elif os.path.isdir(current):
+                shutil.rmtree(current)
+            if os.path.isdir(saved):
+                shutil.copytree(saved, current, symlinks=True)
+            elif os.path.isfile(saved):
+                shutil.copy2(saved, current)
+        return True
 
     def apply(self, paths: Iterable[str]) -> List[str]:
         """Copy approved staged files into the project."""

@@ -44,10 +44,10 @@ from .workspace import FileChange, Workspace
 log = logging.getLogger("mcode.ai")
 
 MCP_SERVER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcp_server.py")
+# No shell in any mode: Advanced mode's git is mCode's (bridge.py git_* tools), which never
+# runs programs named in the repository's configuration (gitutil).
 BUILTIN_TOOLS = {"ask": "Read,Edit,Write,Glob,Grep", "assisted": "Read,Edit,Write,Glob,Grep",
-                 "advanced": "Read,Edit,Write,Glob,Grep,Bash"}
-ADVANCED_BASH = ["Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)",
-                 "Bash(git add:*)", "Bash(git commit:*)", "Bash(git show:*)"]
+                 "advanced": "Read,Edit,Write,Glob,Grep"}
 CONVERSATION_MAX = 80
 
 
@@ -80,6 +80,7 @@ class Turn:
         self.applied: List[str] = []     # in-place changes still in the project (Undo)
         self.session_id = ""
         self.rebuild_after = kind == "fix-build"
+        self.notices: List[str] = []    # what mCode did to protect the project
 
     @property
     def text(self) -> str:
@@ -100,7 +101,7 @@ class Turn:
                 "changes": self.changes, "held": self.held, "applied": self.applied,
                 "cost_usd": self.result.get("cost_usd"), "turns": self.result.get("turns"),
                 "denials": self.result.get("denials", []), "job_id": self.job_id,
-                "rebuild_after": self.rebuild_after}
+                "rebuild_after": self.rebuild_after, "notices": self.notices}
 
 
 class ProjectAI:
@@ -403,7 +404,8 @@ class AIService:
         return self.studio.jobs.cancel(turn.job_id)
 
     def _workspace(self, project: Project) -> Workspace:
-        return Workspace(os.path.join(self.studio.paths.workspaces, project.id), project.path)
+        return Workspace(os.path.join(self.studio.paths.workspaces, project.id), project.path,
+                         hold_build_scripts=bool(self.studio.settings.get("ai.hold_build_scripts")))
 
     # --------------------------------------------------------------- running
     def _argv(self, turn: Turn, prompt: str, session_args: List[str], bridge_token: str) -> List[str]:
@@ -416,7 +418,6 @@ class AIService:
         tools = BUILTIN_TOOLS[mode]
         allowed = [f"mcp__mcode__{name}" for name in MODE_TOOLS[mode]]
         if mode == "advanced":
-            allowed += ADVANCED_BASH
             if self.studio.settings.get("ai.allow_web"):
                 tools += ",WebSearch,WebFetch"
                 allowed += ["WebSearch", "WebFetch"]
@@ -433,8 +434,13 @@ class AIService:
     def _run(self, job: Job, turn: Turn, project: Project, workdir: str, prompt: str) -> dict:
         pai = self.project_ai(project.id)
         slot = "stage" if turn.mode == "ask" else "project"
+        workspace = self._workspace(project)
+        # In place, the turn's own risky edits must not reach a build before the user
+        # decides (the hold rule otherwise only runs after the turn).
+        guard = workspace.pending_reason if turn.mode != "ask" else None
         token = self.bridge.open_turn(project.id, turn.mode,
-                                      on_tool=lambda tool: self._tool_called(turn, tool))
+                                      on_tool=lambda tool: self._tool_called(turn, tool),
+                                      guard=guard)
         timeout = float(self.studio.settings.get("ai.turn_timeout_s"))
         env = self.cli.env({"MCP_TOOL_TIMEOUT": str(int(self.studio.settings.get(
             "dev.build_timeout_s")) * 1000 + 120000), "MCP_TIMEOUT": "30000"})
@@ -536,6 +542,11 @@ class AIService:
                                   "rebuild_after": turn.rebuild_after,
                                   "summary": turn.summary}
             else:
+                if workspace.restore_git():
+                    turn.notices.append("Claude changed the project's git settings (.git); "
+                                        "mCode put them back.")
+                    log.warning("%s: AI turn %s changed .git settings; restored", project.name,
+                                turn.id)
                 changes = workspace.applied_changes()
                 turn.changes = [c.to_dict() for c in changes]
                 held = [c for c in changes if c.risky]
@@ -561,10 +572,11 @@ class AIService:
         pai.add("assistant", context.strip_summary(text) or turn.error, summary=turn.summary,
                 turn=turn.id, state=turn.state, changes=[c["path"] for c in turn.changes],
                 activities=[a["label"] for a in turn.activities][-20:],
-                cost_usd=turn.result.get("cost_usd"))
+                cost_usd=turn.result.get("cost_usd"), notices=turn.notices)
         pai.last_turn = turn.to_dict()
         pai.save()
         self.log.add("result", project_id=project.id, turn=turn.id, state=turn.state,
+                     notices=turn.notices,
                      summary=turn.summary, error=turn.error,
                      changes=[c["path"] for c in turn.changes],
                      held=[c["path"] for c in turn.held] if turn.held else
@@ -591,7 +603,8 @@ class AIService:
         source = workspace.stage if pai.review["mode"] == "ask" else \
             os.path.join(workspace.root, "held")
         from .workspace import compare
-        changes = compare(project.path, source, pai.review["paths"])
+        changes = compare(project.path, source, pai.review["paths"],
+                          build_scripts=workspace.hold_build_scripts)
         data = dict(pai.review)
         data["changes"] = [c.to_dict() for c in changes]
         return data

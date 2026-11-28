@@ -24,6 +24,9 @@ Settings live in `settings.json` in mCode's data folder
 (`~/.whisplay-os/apps/mcode/data/` under mFruit OS, `~/.local/share/mcode/`
 otherwise). Change them in the desktop IDE (Settings), on the LCD (the
 simple ones, marked LCD below) or with any editor while mCode is closed.
+Settings marked *Full* can only be changed from a browser with full access
+(the device's own browser or one paired with *Full access*): they name
+programs or folders mCode uses, or open the device to the network.
 
 Loading rules: a missing file means defaults; a file that is not valid JSON
 is kept as `settings.json.corrupt-<time>` and defaults are used; a value of
@@ -33,9 +36,12 @@ a warning in the log; unknown keys are kept and ignored. Writes are atomic
 
 Other files in the data folder: `state.json` (recent projects, current
 project, chosen board per project, identified chips), `.env` (optional
-`OPENAI_API_KEY` for voice; never logged), `web-token` (desktop IDE access),
-`logs/` (jobs, history, AI actions, serial logs), `backups/`, `workspaces/`
-(AI staging copies), `voice-cache/`, `tools/` (Arduino CLI, PlatformIO venv).
+`OPENAI_API_KEY` for voice; never logged), `web-sessions.json` (paired
+browsers: role, label, times; only hashes of their cookies), `web-token` (the
+shared token of mCode 0.1.x, used once to migrate browsers paired then),
+`logs/` (jobs, history, AI actions, serial logs, `security.jsonl`),
+`backups/`, `workspaces/` (AI staging copies), `voice-cache/`, `tools/`
+(Arduino CLI, PlatformIO venv).
 """
 
 
@@ -47,8 +53,8 @@ def render() -> str:
         if name != section:
             section = name
             lines.append(f"\n## {name}\n")
-            lines.append("| Key | Default | Allowed | LCD | Meaning |")
-            lines.append("|---|---|---|---|---|")
+            lines.append("| Key | Default | Allowed | LCD | Full | Meaning |")
+            lines.append("|---|---|---|---|---|---|")
         if field.choices:
             allowed = ", ".join(f"`{c}`" for c in field.choices)
         elif field.kind == "bool":
@@ -61,7 +67,7 @@ def render() -> str:
         default = f"`{json.dumps(field.default)}`" if field.default != "" else "empty"
         meaning = field.label + (f". {field.help}" if field.help else "")
         lines.append(f"| `{field.key}` | {default} | {allowed} | {'yes' if field.lcd else ''} | "
-                     f"{meaning.replace('|', '/')} |")
+                     f"{'yes' if field.needs_admin else ''} | {meaning.replace('|', '/')} |")
     return "\n".join(lines) + "\n"
 
 

@@ -16,7 +16,10 @@ The AI has no path to this module: Claude can build and test, never upload.
 Checks (any failure stops the upload and says why):
 
 * the project's board has an upload method mCode supports;
-* the firmware exists and is newer than every source file;
+* the firmware exists and is newer than every source file, and no build of
+  the project is running; its SHA-256 is recorded in the plan and checked
+  again right before the first byte is written (a rebuild after the
+  confirmation is refused: the user confirmed those bytes, not new ones);
 * the selected device is still connected and this user may open it;
 * no other program has the port open (the monitor is paused instead);
 * the connected device matches the project: an Arduino Uno's USB ID on an
@@ -40,6 +43,7 @@ from ..projects import boards
 from ..projects.model import Project, ProjectError
 from ..toolchains import backends, diagnostics
 from ..toolchains.backends import BackendError
+from ..toolchains.builds import project_lock, running_build
 from . import usbids
 from .devices import Device
 from .ports import PortBusy, external_holders
@@ -73,6 +77,8 @@ class UploadPlan:
     token: str = ""
     created: float = field(default_factory=time.time)
     speed: int = 0
+    firmware_sha256: str = ""
+    firmware_size: int = 0
 
     @property
     def ok(self) -> bool:
@@ -95,6 +101,7 @@ class UploadPlan:
         return {"action": self.action, "project_id": self.project_id, "project": self.project,
                 "board": self.board, "port": self.port, "device": self.device,
                 "firmware": self.firmware, "speed": self.speed, "ok": self.ok,
+                "firmware_sha256": self.firmware_sha256, "firmware_size": self.firmware_size,
                 "problem": self.problem(), "token": self.token if self.ok else "",
                 "checks": [c.to_dict() for c in self.checks],
                 "warnings": [c.message for c in self.warnings]}
@@ -191,10 +198,16 @@ class UploadService:
             else:
                 plan.firmware = os.path.relpath(artifact, project.path)
                 size = os.path.getsize(artifact)
+                plan.firmware_sha256, plan.firmware_size = file_digest(artifact)
                 checks.append(Check("firmware", True, f"Firmware: {plan.firmware} "
                                     f"({size // 1024} KB, built "
-                                    f"{time.strftime('%H:%M', time.localtime(os.path.getmtime(artifact)))})",
+                                    f"{time.strftime('%H:%M', time.localtime(os.path.getmtime(artifact)))}, "
+                                    f"SHA-256 {plan.firmware_sha256[:12]})",
                                     "info"))
+            building = running_build(self.studio.jobs, project.id)
+            if building is not None:
+                checks.append(Check("firmware", False, f"{building.title} is running. Wait for "
+                                    "it to finish, then flash."))
             last = self.studio.builds.last(project.id)
             if last and last.get("action") in ("build", "rebuild") and last.get("state") != "succeeded":
                 checks.append(Check("firmware", False, "The last build failed. Fix it and build "
@@ -273,8 +286,9 @@ class UploadService:
             self._plans.pop(fresh.token, None)
         if not fresh.ok:
             raise ProjectError(fresh.problem())
-        if fresh.firmware != plan.firmware:
-            raise ProjectError("The firmware changed after you confirmed. Confirm again.")
+        if fresh.firmware != plan.firmware or fresh.firmware_sha256 != plan.firmware_sha256:
+            raise ProjectError("The firmware changed after you confirmed (it was built "
+                               "again). Nothing was written. Check it and confirm again.")
         return self._run(project, fresh)
 
     def _run(self, project: Project, plan: UploadPlan) -> Job:
@@ -284,12 +298,26 @@ class UploadService:
 
         def work(job: Job) -> dict:
             paused = monitor.suspend(port) if monitor is not None else False
+            acquired = False
             try:
-                studio.ports.acquire(port, OWNER)
-            except PortBusy as exc:
-                raise JobFailed(str(exc))
-            try:
+                try:
+                    studio.ports.acquire(port, OWNER)
+                    acquired = True
+                except PortBusy as exc:
+                    raise JobFailed(str(exc))
                 if plan.action == "upload":
+                    # The bytes the user confirmed, and nothing else (a build cannot run now:
+                    # this job holds the project's lock).
+                    artifact = os.path.join(project.path, plan.firmware)
+                    try:
+                        digest = file_digest(artifact)
+                    except OSError:
+                        digest = ("", 0)
+                    if digest != (plan.firmware_sha256, plan.firmware_size):
+                        raise JobFailed("The firmware file changed after you confirmed. "
+                                        "Nothing was written to the board. Confirm again.")
+                    job.say(f"mcode: firmware {plan.firmware}, {plan.firmware_size} bytes, "
+                            f"SHA-256 {plan.firmware_sha256}")
                     backend = studio.builds.backend(project)
                     steps = backend.upload(project, port, plan.speed,
                                            bool(studio.settings.get("hw.verify_upload")))
@@ -325,7 +353,8 @@ class UploadService:
                     return info
                 raise JobFailed(f"unknown action {plan.action}")
             finally:
-                studio.ports.release(port, OWNER)
+                if acquired:
+                    studio.ports.release(port, OWNER)
                 if paused and monitor is not None:
                     monitor.resume(present=lambda p: studio.devices.present(p) is not None)
 
@@ -340,8 +369,10 @@ class UploadService:
 
         title = {"upload": f"Flashing {project.name}", "erase": f"Erasing {os.path.basename(port)}",
                  "identify": f"Identifying {os.path.basename(port)}"}.get(plan.action, plan.action)
+        locks = [project_lock(project.id)] if plan.action == "upload" else []
         return studio.jobs.submit(JobSpec(kind=plan.action, title=title, func=work, lane="upload",
-                                          resource=os.path.realpath(port), project_id=project.id,
+                                          resource=os.path.realpath(port), locks=locks,
+                                          project_id=project.id,
                                           timeout=float(studio.settings.get("dev.upload_timeout_s")) + 60,
                                           parser=_parser, on_done=done,
                                           meta={"project": project.name, "port": port,
@@ -350,6 +381,17 @@ class UploadService:
     def history(self, limit: int = 20, project_id: Optional[str] = None) -> list:
         return self.studio.history.recent(["upload", "erase", "identify"], project_id=project_id,
                                           limit=limit)
+
+
+def file_digest(path: str) -> tuple:
+    """(SHA-256 hex, size) of a file, read in blocks."""
+    digest = hashlib.sha256()
+    size = 0
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(1 << 16), b""):
+            digest.update(block)
+            size += len(block)
+    return digest.hexdigest(), size
 
 
 def _parser(job: Job, line: str) -> None:

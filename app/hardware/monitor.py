@@ -238,12 +238,17 @@ class SerialMonitor:
     def _maybe_publish(self, force: bool = False) -> None:
         now = time.monotonic()
         with self._lock:
+            if self.paused:
+                # Keep what arrives while the view is frozen (bounded like the buffer);
+                # resume publishes it, so nothing goes missing in the interfaces.
+                if len(self._pending) > MAX_LINES:
+                    del self._pending[:len(self._pending) - MAX_LINES]
+                return
             if not self._pending or (not force and now - self._last_publish < 0.1):
                 return
             batch, self._pending = self._pending, []
             self._last_publish = now
-        if not self.paused:
-            self.publish("monitor", {"lines": batch, "port": self.port})
+        self.publish("monitor", {"lines": batch, "port": self.port})
 
     def _publish_state(self) -> None:
         self.publish("monitor.state", self.status())
@@ -281,7 +286,8 @@ class SerialMonitor:
 
     # ---------------------------------------------------------------- views
     def set_paused(self, paused: bool) -> None:
-        self.paused = bool(paused)
+        with self._lock:
+            self.paused = bool(paused)
         self._publish_state()
         if not paused:
             self._maybe_publish(force=True)

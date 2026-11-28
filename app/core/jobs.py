@@ -11,7 +11,12 @@ Rules this module enforces:
 * **Lanes** bound resource use: one build at a time (compilers are heavy on a
   Pi), one upload at a time, one installer, two small tool jobs.
 * **Resources** never overlap: two jobs naming the same resource (a serial
-  port) never run together; the second waits in the queue.
+  port, ``project:<id>``) never run together; the second waits in the queue.
+  A job names its main ``resource`` and any number of ``locks``: a build
+  and an upload of one project both hold ``project:<id>``, so the firmware
+  file is never rewritten while it is being flashed.
+* **History** is bounded: finished jobs that fall out of the last
+  ``history`` jobs are forgotten (never a queued or running one).
 * Programs run in their own process group, at lower CPU priority, with
   stdin closed. **Cancel** sends SIGTERM to the whole group, SIGKILL after
   3 s. A **timeout** does the same and marks the job "timeout".
@@ -69,6 +74,7 @@ class JobSpec:
     timeout: float = 600.0
     lane: str = "build"
     resource: str = ""
+    locks: List[str] = field(default_factory=list)
     project_id: str = ""
     parser: Optional[Callable[["Job", str], None]] = None
     on_done: Optional[Callable[["Job"], None]] = None
@@ -120,6 +126,10 @@ class Job:
 
     def output(self) -> str:
         return "\n".join(self.lines)
+
+    @property
+    def resources(self) -> set:
+        return {r for r in [self.spec.resource] + list(self.spec.locks) if r}
 
     def to_dict(self, lines: int = 0) -> dict:
         data = {"id": self.id, "kind": self.kind, "title": self.title, "state": self.state,
@@ -219,6 +229,7 @@ class JobManager:
             self._jobs[job_id] = job
             self._order.append(job_id)
             self._queue.append(job)
+            self._forget_old()
         log.info("job %s queued: %s", job.id, spec.title)
         self._changed(job, force=True)
         self._schedule()
@@ -245,9 +256,16 @@ class JobManager:
     def busy(self, resource: str) -> Optional[Job]:
         with self._lock:
             for job in self._jobs.values():
-                if not job.finished and resource and job.spec.resource == resource:
+                if not job.finished and resource and resource in job.resources:
                     return job
         return None
+
+    def _forget_old(self) -> None:
+        """Drop finished jobs that fell out of the bounded history (lock held)."""
+        keep = set(self._order)
+        for job_id in [i for i, j in self._jobs.items() if i not in keep and j.finished]:
+            del self._jobs[job_id]
+            self._last_publish.pop(job_id, None)
 
     def cancel(self, job_id: str) -> bool:
         job = self.get(job_id)
@@ -293,8 +311,8 @@ class JobManager:
                 in_lane = sum(1 for j in running if j.spec.lane == lane)
                 if in_lane >= self.lane_limits.get(lane, 1):
                     continue
-                if job.spec.resource and any(j.spec.resource == job.spec.resource
-                                             for j in running):
+                wanted = job.resources
+                if wanted and any(wanted & j.resources for j in running):
                     continue
                 self._queue.remove(job)
                 job.state = RUNNING
@@ -498,6 +516,7 @@ class JobManager:
             if state == SUCCEEDED and job.progress is not None:
                 job.progress = 1.0
             job._process = None
+            self._forget_old()
         if job.spec.on_done is not None:
             try:
                 job.spec.on_done(job)

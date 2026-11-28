@@ -61,7 +61,11 @@ Assisted / Advanced), *Undo Claude's last change*, *New conversation*,
 |---|---|---|
 | Ask before changes (default) | read and edit a **copy** of the project | approve the diff before anything changes |
 | Assisted | edit the project, **build** and run host **tests** through mCode | review afterwards, *Undo* any time |
-| Advanced | as Assisted, plus static analysis, clean and `git` (status/diff/log/add/commit); web search if allowed in Settings | review afterwards, *Undo* any time |
+| Advanced | as Assisted, plus static analysis, clean and git through mCode (status, diff, log, show, commit); web search if allowed in Settings | review afterwards, *Undo* any time |
+
+In Assisted and Advanced mode, tests that run on this device (PlatformIO
+native tests, `make test`) run code Claude wrote, as your user. Changes to
+build scripts and other risky files wait for your OK before anything builds.
 
 In every mode Claude **cannot** flash, erase, change fuses, install software
 or libraries, or touch files outside the project. See
@@ -158,9 +162,20 @@ Everything else is in the desktop IDE's Settings and
 * **On the device's HDMI desktop**: mCode opens it in the browser when a
   desktop session is running (Settings › *Open the IDE on the HDMI desktop*).
 * **On this computer** (mCode run with `./run.sh --desktop`): it opens itself.
-* **From a laptop** (headless Pi Zero / Orange Pi): on the LCD, Settings ›
-  Desktop IDE › *Use from a computer* (confirm), then scan the pairing QR
-  code or open the address and type the 6-digit code.
+* **From a laptop or a phone** (headless Pi Zero / Orange Pi): on the LCD,
+  Settings › Desktop IDE › *Use from a computer* (confirm), then *Pair a
+  computer*: scan its QR code with the phone's camera, or open the address
+  and type the 6-digit code. Each code works once and the screen keeps
+  showing a fresh one while it is open. 3× on that screen switches what the
+  next pairing may do (Developer, Full access, Viewer). A browser with full
+  access can pair others from Settings › Security.
+* **On an iPhone or Android phone** the same address shows the phone layout:
+  a tab bar (Home, Projects, AI Engineer, Devices, Settings), one screen at
+  a time, bottom sheets. In Safari, Share › *Add to Home Screen* gives it an
+  icon and a full-screen window. See [iPhone and mobile](IOS_MOBILE.md).
+* **Signing browsers out**: Settings › Security lists every paired browser
+  (sign one out, or all others); the LCD's *Sign out all computers* signs
+  out every browser.
 
 Layout: activity bar (Dashboard, Explorer, Hardware, Libraries, Version
 history), editor tabs in the middle, AI Engineer on the right (or left, in
@@ -176,8 +191,11 @@ Claude.
 The AI panel shows the conversation, Claude's steps while it works (Stop),
 and proposed changes as diffs with a checkbox per file (*Apply selected*,
 *Discard all*). Attach the open file (+ file) or the serial output
-(+ serial) to a request. Quick actions: Fix build, Explain serial, Review
-code, Wiring doc.
+(+ serial) to a request. Suggested actions: Create firmware (fills in
+"Create firmware that …" for you to finish), Explain code, Fix build errors,
+Improve performance, Review security, Wiring doc, Explain serial output.
+The line above the text box says what the current mode lets Claude do; tap
+it to change the mode. A request that failed shows *Try again*.
 
 ## Walk-throughs
 

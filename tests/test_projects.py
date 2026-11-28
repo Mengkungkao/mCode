@@ -5,12 +5,13 @@ from __future__ import annotations
 import configparser
 import io
 import os
+import subprocess
 import tarfile
 import unittest
 
 from app.core.config import Settings
 from app.core.state import StateStore
-from app.projects import backups, boards, files, model, templates
+from app.projects import backups, boards, files, gitutil, model, templates
 from app.projects.manager import ProjectManager
 from app.projects.model import Project, ProjectError
 
@@ -218,6 +219,61 @@ class ManagerTests(TempCase):
             tar.addfile(info)
         with self.assertRaises(ProjectError):
             backups.safe_extract(link, os.path.join(self.tmp, "dest2"))
+
+
+@unittest.skipUnless(gitutil.git_path(), "git is not installed")
+class GitSafetyTests(TempCase):
+    """A-01: mCode's own git calls ran programs named in a project's .git/config."""
+
+    def repo(self):
+        path = os.path.join(self.tmp, "repo")
+        os.makedirs(path)
+        with open(os.path.join(path, "Makefile"), "w") as handle:
+            handle.write("all:\n")
+        with open(os.path.join(path, ".gitattributes"), "w") as handle:
+            handle.write("* filter=evil diff=evil\n")
+        self.assertTrue(gitutil.init(path))
+        self.markers = {name: os.path.join(self.tmp, name) for name in
+                        ("fsmonitor", "filter", "process", "textconv", "external", "gpg", "hook")}
+        m = self.markers
+        settings = {"core.fsmonitor": f"touch {m['fsmonitor']}; false",
+                    "filter.evil.clean": f"sh -c 'touch {m['filter']}; cat'",
+                    "filter.evil.process": f"touch {m['process']}",
+                    "diff.evil.textconv": f"sh -c 'touch {m['textconv']}; cat'",
+                    "diff.external": f"touch {m['external']}",
+                    "gpg.program": f"touch {m['gpg']}", "commit.gpgSign": "true"}
+        for key, value in settings.items():
+            subprocess.run(["git", "-c", "core.fsmonitor=false", "config", key, value], cwd=path,
+                           check=True)
+        hook = os.path.join(path, ".git", "hooks", "pre-commit")
+        with open(hook, "w") as handle:
+            handle.write(f"#!/bin/sh\ntouch {m['hook']}\n")
+        os.chmod(hook, 0o755)
+        with open(os.path.join(path, "Makefile"), "a") as handle:
+            handle.write("\t@echo changed\n")
+        return path
+
+    def ran(self):
+        return sorted(name for name, path in self.markers.items() if os.path.exists(path))
+
+    def test_viewing_a_repository_runs_none_of_its_programs(self):
+        path = self.repo()
+        status = gitutil.status(path)
+        self.assertEqual([c["path"] for c in status["changes"]], ["Makefile"])
+        self.assertIn("changed", gitutil.diff(path))
+        self.assertTrue(gitutil.log(path))
+        self.assertIn("Project created", gitutil.show(path, "HEAD"))
+        self.assertEqual(self.ran(), [])
+
+    def test_commits_for_the_ai_run_no_hooks_or_signing_programs(self):
+        path = self.repo()
+        self.assertIn("Committed", gitutil.commit(path, "AI change", hooks=False))
+        self.assertEqual(self.ran(), [])
+
+    def test_show_refuses_options_as_revisions(self):
+        path = self.repo()
+        with self.assertRaises(ValueError):
+            gitutil.show(path, "--output=/tmp/x")
 
 
 class FileBoundaryTests(TempCase):

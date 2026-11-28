@@ -93,10 +93,16 @@ confirm, mCode checks:
    and the catalogue has that ESP32, the LCD offers *Make it <board>* (same
    toolchain: the project's board changes and it is rebuilt) or *New <board>
    project* (PlatformIO has no ESP32-C5, for example);
-6. the upload tool is installed.
+6. the upload tool is installed;
+7. no build, rebuild, clean or test of the project is running (since 0.2.0:
+   a build and an upload of one project never run at the same time; one
+   waits for the other).
 
-Confirming uses a one-time token valid for five minutes; if the firmware
-changed in between, mCode asks again. Erasing the whole flash (ESP32) is a
+Confirming uses a one-time token valid for five minutes. The plan records
+the firmware's SHA-256 and size; when you confirm, and again right before the
+first byte is written, mCode checks that the file is still exactly what you
+confirmed. If it was built again in between, nothing is written and mCode
+asks again (the job log shows the SHA-256 it flashed). Erasing the whole flash (ESP32) is a
 separate action that requires typing ERASE in the desktop IDE. Flash is
 never erased as part of a normal upload.
 

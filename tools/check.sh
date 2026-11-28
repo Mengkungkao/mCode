@@ -72,7 +72,8 @@ suite() { python3 -m unittest discover -s tests -t . 2>&1 | tail -n 3 | grep -q 
 javascript() {
   # Syntax of the desktop IDE's own scripts (vendored libraries excluded); needs node.
   if command -v node >/dev/null 2>&1; then
-    node --check app/web/static/app.js && node --check app/web/static/pair.js
+    node --check app/web/static/app.js && node --check app/web/static/mobile.js &&
+      node --check app/web/static/pair.js
   else echo "node not found: JavaScript syntax check skipped"; fi
 }
 smoke() { sh test.sh >/dev/null; }
@@ -87,6 +88,11 @@ sdk() {
     "$OS/scripts/sdk-sync.sh" . --check >/dev/null &&
       cmp -s "$OS/docs/apps/APP_CONTRACT.md" .claude/rules/mfruit-os-app.md
   else echo "no mFruit OS checkout at $OS: SDK check skipped"; fi
+}
+
+vendored() {
+  # CodeMirror and xterm.js are copied, never edited: their SHA-256 sums are recorded.
+  (cd app/web/static/vendor && sha256sum -c --quiet SHA256SUMS)
 }
 
 links() {
@@ -115,6 +121,7 @@ fi
 step "smoke test (test.sh)" smoke
 step "mFruit OS package preflight" preflight
 step "SDK and app contract copies" sdk
+step "vendored web libraries unchanged" vendored
 step "Markdown links" links
 step "configuration doc current" python3 tools/gen-config-doc.py --check
 find . -name __pycache__ -type d -prune -exec rm -rf {} + 2>/dev/null

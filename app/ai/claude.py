@@ -240,7 +240,10 @@ TOOL_WORDS = {"Read": "Reading", "Edit": "Editing", "MultiEdit": "Editing", "Wri
 MCODE_WORDS = {"build": "Building the firmware", "run_tests": "Running the tests",
                "static_check": "Checking the code", "project_info": "Reading the project",
                "last_build": "Reading the build log", "serial_log": "Reading serial output",
-               "list_devices": "Checking connected boards", "clean": "Cleaning the build"}
+               "list_devices": "Checking connected boards", "clean": "Cleaning the build",
+               "git_status": "Checking git", "git_diff": "Reading the changes",
+               "git_log": "Reading the history", "git_show": "Reading a commit",
+               "git_commit": "Committing"}
 
 
 def describe_tool(name: str, data: dict, root: str = "") -> str:

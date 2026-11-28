@@ -10,6 +10,15 @@ Each AI turn registers a random turn token naming its project and mode; the
 MCP server can only use the tools that mode allows, for that project, and
 only while the turn runs. There is no tool that uploads, erases, changes
 fuses or installs anything.
+
+Builds run the project's build scripts on this device, so the build, test,
+check and clean tools first ask the turn's *guard* (``AIService``): while
+the turn has changes waiting for the user's decision (partition, bootloader,
+dependency or build-script edits, git settings) they refuse and say why.
+Jobs a turn starts are cancelled when the turn ends, so stopping Claude
+also stops its build. Git in Advanced mode is mCode's own (``gitutil``,
+which never runs programs named in the repository's configuration), not a
+shell.
 """
 
 from __future__ import annotations
@@ -41,11 +50,24 @@ BUILD_TOOLS = {
 ADVANCED_TOOLS = {
     "static_check": "Run static analysis (pio check or cppcheck) and return the findings.",
     "clean": "Delete the project's build output.",
+    "git_status": "The project's git branch and changed files.",
+    "git_diff": "The project's uncommitted changes as a patch.",
+    "git_log": "The project's recent commits (hash, time, subject).",
+    "git_show": "One commit's message and patch (rev: HEAD, HEAD~1 or a hash).",
+    "git_commit": "Stage all changes and commit them with the given message.",
 }
 MODE_TOOLS = {"ask": dict(READ_TOOLS), "assisted": dict(READ_TOOLS, **BUILD_TOOLS),
               "advanced": dict(READ_TOOLS, **BUILD_TOOLS, **ADVANCED_TOOLS)}
-SCHEMAS = {"serial_log": {"type": "object", "properties": {
-    "lines": {"type": "integer", "description": "how many recent lines (max 400)"}}}}
+JOB_TOOLS = {"build": "build", "run_tests": "test", "static_check": "check", "clean": "clean"}
+SCHEMAS = {
+    "serial_log": {"type": "object", "properties": {
+        "lines": {"type": "integer", "description": "how many recent lines (max 400)"}}},
+    "git_show": {"type": "object", "properties": {
+        "rev": {"type": "string", "description": "a revision: HEAD, HEAD~1 or a commit hash"}}},
+    "git_commit": {"type": "object", "properties": {
+        "message": {"type": "string", "description": "the commit message"}},
+        "required": ["message"]},
+}
 
 
 class ToolBridge:
@@ -90,15 +112,21 @@ class ToolBridge:
         except OSError:
             pass
 
-    def open_turn(self, project_id: str, mode: str, on_tool=None) -> str:
+    def open_turn(self, project_id: str, mode: str, on_tool=None, guard=None) -> str:
+        """``guard()`` returns why build-type tools must wait ("" = they may run)."""
         token = secrets.token_hex(16)
         with self._lock:
-            self._turns[token] = {"project_id": project_id, "mode": mode, "on_tool": on_tool}
+            self._turns[token] = {"project_id": project_id, "mode": mode, "on_tool": on_tool,
+                                  "guard": guard, "jobs": []}
         return token
 
     def close_turn(self, token: str) -> None:
+        """End the turn: its token stops working and its unfinished jobs are cancelled."""
         with self._lock:
-            self._turns.pop(token, None)
+            turn = self._turns.pop(token, None)
+        for job_id in (turn or {}).get("jobs", []):
+            if self.studio.jobs.cancel(job_id):
+                log.info("AI turn ended: cancelled its job %s", job_id)
 
     def tools_for(self, mode: str) -> list:
         return [{"name": name, "description": text,
@@ -118,9 +146,11 @@ class ToolBridge:
     def _handle(self, conn: socket.socket) -> None:
         with conn:
             try:
-                reader = conn.makefile("r", encoding="utf-8")
-                line = reader.readline(1_000_000)
+                with conn.makefile("r", encoding="utf-8") as reader:
+                    line = reader.readline(1_000_000)
                 request = json.loads(line or "{}")
+                if not isinstance(request, dict):
+                    raise ValueError("expected a JSON object")
                 reply = self.call(request.get("turn", ""), request.get("tool", ""),
                                   request.get("args") or {})
             except Exception as exc:    # isolation boundary: answer the call, never crash
@@ -136,6 +166,8 @@ class ToolBridge:
             turn = self._turns.get(token)
         if turn is None:
             return {"ok": False, "error": "This AI request has ended."}
+        if not isinstance(args, dict):
+            return {"ok": False, "error": "Tool arguments must be an object."}
         if tool == "_list":
             return {"ok": True, "tools": self.tools_for(turn["mode"])}
         allowed = MODE_TOOLS.get(turn["mode"], READ_TOOLS)
@@ -155,7 +187,10 @@ class ToolBridge:
             last = studio.builds.last(project.id)
             return {"ok": True, "text": _format_build(last) if last else "No build yet."}
         if tool == "serial_log":
-            count = max(1, min(400, int(args.get("lines") or 120)))
+            try:
+                count = max(1, min(400, int(args.get("lines") or 120)))
+            except (TypeError, ValueError):
+                return {"ok": False, "error": "lines must be a number."}
             monitor = studio.monitor
             if monitor is None or not monitor.lines:
                 return {"ok": True, "text": "The serial monitor has no output."}
@@ -169,18 +204,58 @@ class ToolBridge:
                                            "problem")} for d in devices]
             return {"ok": True, "text": json.dumps(slim, indent=2) if slim else
                     "No boards are connected."}
-        action = {"build": "build", "run_tests": "test", "static_check": "check",
-                  "clean": "clean"}[tool]
+        if tool.startswith("git_"):
+            return self._git(project, tool, args)
+        action = JOB_TOOLS[tool]
+        guard = turn.get("guard")
+        reason = guard() if guard is not None else ""
+        if reason:
+            log.info("AI %s refused: %s", tool, reason)
+            return {"ok": True, "text": f"mCode did not run {tool}: {reason}"}
         try:
             job = studio.builds.run(project, action, source="ai")
         except Exception as exc:
             return {"ok": True, "text": f"{tool} could not start: {exc}"}
+        with self._lock:
+            if token not in self._turns:          # the turn ended while the job started
+                ended = True
+            else:
+                ended = False
+                turn["jobs"].append(job.id)
+        if ended:
+            studio.jobs.cancel(job.id)
+            return {"ok": False, "error": "This AI request has ended."}
         studio.jobs.wait(job.id, job.spec.timeout + 30)
         last = studio.builds.last(project.id) or {}
         return {"ok": True, "text": _format_build(last if last.get("job") == job.id else
                                                   {"action": action, "state": job.state,
                                                    "headline": job.error,
                                                    "output_tail": job.tail(60)})}
+
+
+    def _git(self, project, tool: str, args: dict) -> dict:
+        from ..projects import gitutil
+        if not gitutil.git_path():
+            return {"ok": True, "text": "git is not installed on this device."}
+        try:
+            if tool == "git_status":
+                return {"ok": True, "text": json.dumps(gitutil.status(project.path), indent=2)}
+            if tool == "git_diff":
+                return {"ok": True, "text": gitutil.diff(project.path) or "No changes."}
+            if tool == "git_log":
+                return {"ok": True, "text": "\n".join(
+                    f"{c['hash']} {c['subject']}" for c in gitutil.log(project.path)) or
+                    "No commits."}
+            if tool == "git_show":
+                return {"ok": True, "text": gitutil.show(project.path, str(args.get("rev") or
+                                                                           "HEAD"))}
+            message = str(args.get("message") or "").strip()
+            if not message:
+                return {"ok": False, "error": "Give a commit message."}
+            # No hooks for the AI's commits: a hook is a program in the project.
+            return {"ok": True, "text": gitutil.commit(project.path, message[:500], hooks=False)}
+        except (RuntimeError, ValueError, OSError) as exc:
+            return {"ok": True, "text": f"{tool} failed: {exc}"}
 
 
 def _format_build(last: dict) -> str:

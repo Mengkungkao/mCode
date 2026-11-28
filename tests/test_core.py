@@ -192,6 +192,43 @@ class JobTests(TempCase):
             self.assertFalse(sum(n.startswith("b") for n in names) > 1, names)
             self.assertFalse(sum(n.startswith("u") for n in names) > 1, names)
 
+    def test_locks_keep_jobs_of_one_project_apart(self):
+        manager, _ = self.manager()
+        gate = threading.Event()
+        first = manager.submit(JobSpec("upload", "u", func=lambda j: gate.wait(5), lane="upload",
+                                       resource="/dev/ttyACM0", locks=["project:p1"]))
+        second = manager.submit(JobSpec("build", "b", func=lambda j: None, lane="build",
+                                        locks=["project:p1"]))
+        other = manager.submit(JobSpec("build", "o", func=lambda j: None, lane="tool",
+                                       locks=["project:p2"]))
+        manager.wait(other.id, 5)
+        self.assertEqual(other.state, SUCCEEDED)
+        self.assertEqual(second.state, "queued")
+        self.assertIs(manager.busy("project:p1"), first)
+        gate.set()
+        manager.wait(second.id, 5)
+        self.assertEqual(second.state, SUCCEEDED)
+
+    def test_finished_jobs_are_forgotten(self):
+        """A-07: every job stayed in memory with up to 4000 output lines."""
+        manager, _ = self.manager(history=5)
+        gate = threading.Event()
+        long_job = manager.submit(JobSpec("build", "long", func=lambda j: gate.wait(10),
+                                          lane="install"))
+        done = []
+        for i in range(20):
+            job = manager.submit(JobSpec("tool", f"t{i}", func=lambda j: j.say("x" * 100),
+                                         lane="tool"))
+            manager.wait(job.id, 5)
+            done.append(job.id)
+        self.assertLessEqual(len(manager._jobs), 6)
+        self.assertLessEqual(len(manager._last_publish), 6)
+        self.assertIsNotNone(manager.get(done[-1]))
+        self.assertIsNone(manager.get(done[0]))
+        self.assertIs(manager.get(long_job.id), long_job)      # running: never forgotten
+        gate.set()
+        manager.wait(long_job.id, 5)
+
     def test_python_job_steps_and_failure_message(self):
         manager, _ = self.manager()
 

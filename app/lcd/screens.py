@@ -2315,8 +2315,11 @@ class DesktopScreen(ListScreen):
         items.append(Item("Use from a computer", lambda: self._lan(), kind="toggle",
                           value=s.get("web.lan"), select="switch"))
         if web is not None and web.running and s.get("web.lan"):
-            items.append(Item("Show pairing code", lambda: ui.push(PairScreen(ui)), kind="nav"))
-            items.append(Item("New pairing code", self._rotate, select="renew"))
+            items.append(Item("Pair a computer", lambda: ui.push(PairScreen(ui)), kind="nav"))
+        if web is not None and web.running:
+            count = len(web.sessions.list())
+            items.append(Item("Sign out all computers", self._rotate, kind="danger",
+                              subtitle=f"{count} paired" if count else None, select="sign out"))
         items.append(Item("Back", ui.pop, kind="back"))
         return items
 
@@ -2341,15 +2344,20 @@ class DesktopScreen(ListScreen):
             self.ui.push(PairScreen(self.ui))
 
         self.ui.push(ConfirmScreen(self.ui, "Desktop IDE", "Allow computers?",
-                                   "Anyone on this network with the pairing code can edit "
-                                   "projects and build. Flashing still asks on this screen.",
+                                   "Computers and phones on this network can pair while "
+                                   "Pair a computer is open here. Flashing still asks first.",
                                    "Allow", enable))
 
     def _rotate(self):
-        web = self.web()
-        if web is not None:
-            web.rotate_token()
-            self.ui.toast("New pairing code", "success")
+        def go():
+            web = self.web()
+            if web is not None:
+                web.rotate_token()
+                self.ui.toast("All computers signed out", "success")
+
+        self.ui.push(ConfirmScreen(self.ui, "Desktop IDE", "Sign out all?",
+                                   "Every paired computer and phone must pair again.",
+                                   "Sign out", go))
 
     def render(self, c):
         t = c.theme
@@ -2359,26 +2367,72 @@ class DesktopScreen(ListScreen):
             c.text(MARGIN, y, "The desktop IDE is off.", 14, "medium", t.text_muted)
             y += 24
         else:
-            for url in web.urls(with_token=False)[:2]:
+            for url in web.urls()[:2]:
                 c.text(MARGIN, y, url, 13, "semibold", t.text, max_width=SCREEN_W - 2 * MARGIN)
                 y += 20
         draw_list(c, [i.row() for i in self.items()], self.index, top=y + 6)
 
 
 class PairScreen(Screen):
-    title = "Pair a computer"
+    """Pairing exists only while this screen is open: a single-use QR link and
+    6-digit code (web/sessions.py). 3× switches what the next pairing may do."""
+
+    title = "Pairing"
+    animated = True                 # the code renews after each pairing; keep it fresh
+    ROLE_CYCLE = ("developer", "admin", "viewer")
+    ROLE_SHORT = {"developer": "Developer", "admin": "Full access", "viewer": "Viewer"}
+
+    def __init__(self, ui):
+        super().__init__(ui)
+        self.role = self.studio.settings.get("web.pair_role")
+
+    def web(self):
+        web = getattr(self.studio, "web", None)
+        return web if web is not None and web.running else None
+
+    def enter(self):
+        super().enter()
+        web = self.web()
+        if web is not None:
+            web.open_pairing(self.role)
+
+    def leave(self):
+        super().leave()
+        web = self.web()
+        if web is not None:
+            web.close_pairing()
+
+    def on_event(self, topic, data):
+        return topic in ("web", "security")
+
+    def _switch(self):
+        index = self.ROLE_CYCLE.index(self.role) if self.role in self.ROLE_CYCLE else 0
+        self.role = self.ROLE_CYCLE[(index + 1) % len(self.ROLE_CYCLE)]
+        web = self.web()
+        if web is not None:
+            web.open_pairing(self.role)
+        self.ui.toast(self.ROLE_SHORT[self.role])
 
     def controls(self):
-        return [Control(BACK, "back", lambda a: self.ui.pop())]
+        return [Control(EXTRA, "access", lambda a: self._switch()),
+                Control(BACK, "back", lambda a: self.ui.pop())]
 
     def render(self, c):
         t = c.theme
-        web = getattr(self.studio, "web", None)
-        urls = web.urls(with_token=True, lan_only=True) if web is not None and web.running else []
-        if not urls:
+        web = self.web()
+        window = web.sessions.pairing() if web is not None else None
+        if web is not None and (window is None or window.expires - window.clock() < 60):
+            window = web.open_pairing(self.role)        # keep it open while shown
+        url = web.pair_url() if web is not None else ""
+        if not url or window is None:
             message(c, "No network address", "Connect Wi-Fi, then try again.", tone="warning")
             return
-        size = draw.qr_code(c, urls[0], SCREEN_W // 2, CONTENT_TOP + 2, 168)
-        draw.wrapped(c, "Scan, or open the address shown in Desktop IDE and enter the code "
-                     f"{web.pair_code()}", MARGIN, CONTENT_TOP + size + 6, SCREEN_W - 2 * MARGIN,
-                     12, "medium", t.text_muted, max_lines=3, anchor_center=True)
+        size = draw.qr_code(c, url, SCREEN_W // 2, CONTENT_TOP + 2, 150)
+        y = CONTENT_TOP + size + 4
+        code = window.code
+        c.text(SCREEN_W // 2, y, f"{code[:3]} {code[3:]}", 22, "bold", t.text, anchor="mt")
+        note = f"Paired: {window.paired[-1]}" if window.paired else \
+            f"{self.ROLE_SHORT.get(window.role, window.role)} · scan, or type the code"
+        draw.wrapped(c, note, MARGIN, y + 28, SCREEN_W - 2 * MARGIN, 12, "medium",
+                     t.success if window.paired else t.text_muted, max_lines=2,
+                     anchor_center=True)

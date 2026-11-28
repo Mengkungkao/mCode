@@ -27,6 +27,19 @@ log = logging.getLogger("mcode.builds")
 
 ACTIONS = {"build": "Build", "rebuild": "Rebuild", "clean": "Clean", "test": "Test",
            "check": "Static analysis"}
+def project_lock(project_id: str) -> str:
+    """The job resource that keeps a project's builds and uploads apart."""
+    return f"project:{project_id}"
+
+
+def running_build(jobs: JobManager, project_id: str) -> Optional[Job]:
+    """The project's build, rebuild, clean, test or check job that is queued or running."""
+    for job in jobs.active():
+        if job.spec.lane == "build" and job.spec.project_id == project_id:
+            return job
+    return None
+
+
 _PIO_TESTS = re.compile(r"(?P<total>\d+) test cases?: (?:(?P<failed>\d+) failed, )?"
                         r"(?:(?P<ok>\d+) succeeded)?")
 _UNITY = re.compile(r"(?P<total>\d+) Tests (?P<failed>\d+) Failures (?P<ignored>\d+) Ignored")
@@ -92,8 +105,11 @@ class BuildService:
         def work(job: Job) -> dict:
             return self._execute(job, project, action, plan)
 
+        # project:<id> is also held by the project's upload: a build never rewrites the
+        # firmware while it is being flashed (it waits in the queue instead).
         spec = JobSpec(kind=action, title=plan.what, func=work, cwd=plan.cwd,
                        timeout=plan.timeout, lane="build", project_id=project.id,
+                       locks=[project_lock(project.id)],
                        parser=_progress_parser,
                        on_done=lambda job: self._done(job, project, action, source),
                        meta={"project": project.name, "source": source,

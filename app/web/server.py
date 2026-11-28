@@ -1,25 +1,31 @@
 """The desktop IDE: a local web server that serves the IDE page and its API.
 
-Security model (docs/SECURITY.md):
+Security model (docs/SECURITY.md, docs/SECURITY_AUDIT_2.0.md):
 
 * Binds to 127.0.0.1 unless "Use from a computer" (``web.lan``) is switched
-  on, which can only be done on the device's LCD (or in a browser that is
-  already signed in).
-* Every request except the static files and the sign-in page needs the
-  access token as an HttpOnly, SameSite=Strict cookie. The token lives in
-  the data folder (owner-only). mCode opens the local browser with a one-time
-  link that sets the cookie; a computer on the network uses the pairing link
-  (QR on the LCD) or the 6-digit pairing code shown on the LCD, which is
-  rate-limited.
-* The Host header must name this device (stops DNS-rebinding attacks); every
-  write needs the ``X-mCode: 1`` header (stops cross-site form posts).
+  on, on the device's LCD or by a browser with full access.
+* Every request except the static files and the pairing page needs a
+  **session** cookie (HttpOnly, SameSite=Strict; ``sessions.py``): one per
+  browser, revocable, expiring when unused. The device's own browser gets one
+  through a single-use link; other computers and phones pair while a pairing
+  screen is open (random single-use code or QR token, rate-limited).
+* Each session has a **role**: viewer (look only), developer (projects,
+  builds, flashing with confirmation, AI) or admin (also the terminal,
+  folders outside the project folder, tools, device and security settings).
+  :func:`required_role` is the one table of what needs which role.
+* The Host header must name this device (DNS rebinding); every write needs
+  ``X-mCode: 1`` and, when the browser sends one, a same-site ``Origin``
+  (cross-site posts).
 * Uploads still need the confirmation token from ``/api/upload/prepare``,
   and the browser asks the user first: the same two-step rule as the LCD.
+* Connections time out when idle; event streams drop clients that vanished
+  (a phone that slept or left the Wi-Fi) instead of holding their slot.
 """
 
 from __future__ import annotations
 
 import base64
+import gzip
 import hashlib
 import hmac
 import io
@@ -30,21 +36,23 @@ import os
 import queue
 import re
 import secrets
+import shutil
 import socket
 import threading
 import time
 import urllib.parse
 import zipfile
-from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from ..core import storage
+from ..core.config import FIELD_BY_KEY
 from ..core.net import local_addresses
 from ..projects import boards, files as pfiles, gitutil
 from ..projects.model import ProjectError
 from ..toolchains import detect
 from . import desktop
+from .sessions import RANK, ROLE_LABELS, ROLES, SessionStore
 from .terminal import Terminals
 
 log = logging.getLogger("mcode.web")
@@ -52,8 +60,12 @@ STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 COOKIE = "mcode_session"
 MAX_BODY = 8 * 1024 * 1024
 MAX_ZIP = 64 * 1024 * 1024
+MAX_ZIP_EXPANDED = 256 * 1024 * 1024
 MAX_SSE = 12
-EVENT_TOPICS = None    # all
+IDLE_TIMEOUT = 60.0                 # seconds a connection may sit without a request
+STREAM_USER_TIMEOUT_MS = 30000      # unacknowledged event-stream data drops the client
+COMPRESSIBLE = ("text/", "application/javascript", "application/json", "image/svg+xml",
+                "application/manifest+json")
 
 
 class ApiError(Exception):
@@ -61,6 +73,80 @@ class ApiError(Exception):
         super().__init__(message)
         self.status = status
         self.fix = fix
+
+
+def tune_stream_socket(sock: socket.socket) -> None:
+    """Keep-alive probes and a TCP user time-out: a browser that vanished without
+    closing (a phone asleep, out of Wi-Fi) is dropped within about 45 s."""
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        if hasattr(socket, "TCP_KEEPIDLE"):
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 20)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 5)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
+        if hasattr(socket, "TCP_USER_TIMEOUT"):
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_USER_TIMEOUT, STREAM_USER_TIMEOUT_MS)
+    except OSError:
+        pass
+
+
+def required_role(method: str, parts: List[str], body: dict) -> str:
+    """The one table of what each API call needs (A-16). ``parts`` excludes "api"."""
+    head = parts[0] if parts else ""
+    sub = parts[1] if len(parts) > 1 else ""
+    if head in ("term", "security"):
+        return "admin"
+    if head == "session":
+        return "viewer"                 # see and end one's own session
+    if method == "GET":
+        return "viewer"
+    if head == "settings":
+        values = body.get("values") or {}
+        needs = [k for k in values if k in FIELD_BY_KEY and FIELD_BY_KEY[k].needs_admin]
+        return "admin" if needs else "developer"
+    if head == "projects" and sub in ("open", "import"):
+        return "admin"                  # any folder on the device
+    if head == "tools" and sub == "install":
+        return "admin"
+    if head == "ai" and sub in ("login", "logout"):
+        return "admin"                  # the device's Claude account
+    if head == "web":
+        return "admin"
+    return "developer"
+
+
+class _Static:
+    """Static files with an ETag, gzip-compressed once when the browser accepts it."""
+
+    def __init__(self, root: str):
+        self.root = os.path.realpath(root)
+        self._cache: Dict[str, tuple] = {}
+        self._lock = threading.Lock()
+
+    def get(self, rel: str) -> Optional[tuple]:
+        target = os.path.realpath(os.path.join(self.root, rel))
+        if not target.startswith(self.root + os.sep) or not os.path.isfile(target):
+            return None
+        stat = os.stat(target)
+        with self._lock:
+            cached = self._cache.get(target)
+            if cached and cached[0] == (stat.st_mtime_ns, stat.st_size):
+                return cached[1:]
+        with open(target, "rb") as handle:
+            body = handle.read()
+        ctype = mimetypes.guess_type(target)[0] or "application/octet-stream"
+        if target.endswith(".webmanifest"):
+            ctype = "application/manifest+json"
+        if ctype.startswith("text/") or ctype in ("application/javascript",
+                                                  "application/manifest+json"):
+            ctype += "; charset=utf-8"
+        packed = gzip.compress(body, 6, mtime=0) if ctype.startswith(COMPRESSIBLE) and \
+            len(body) > 1024 else None
+        etag = '"' + hashlib.sha256(body).hexdigest()[:20] + '"'
+        entry = (body, packed, ctype, etag)
+        with self._lock:
+            self._cache[target] = ((stat.st_mtime_ns, stat.st_size),) + entry
+        return entry
 
 
 class WebServer:
@@ -73,14 +159,23 @@ class WebServer:
         self.port = 0
         self.host = ""
         self.running = False
+        self.idle_timeout = IDLE_TIMEOUT
         self.terminals = Terminals(studio.events.publish)
+        self.static = _Static(STATIC)
         self._sse = 0
         self._sse_lock = threading.Lock()
         self._pair_attempts: List[float] = []
+        self._hosts: Tuple[float, set] = (0.0, set())
+        self.sessions = SessionStore(studio.paths.web_sessions_file,
+                                     days=lambda: studio.settings.get("web.session_days"),
+                                     log_path=studio.paths.security_log,
+                                     publish=studio.events.publish)
         self.token = self._load_token()
 
-    # ----------------------------------------------------------------- token
+    # ------------------------------------------------- legacy token (0.1.x)
     def _load_token(self) -> str:
+        """The shared token mCode 0.1.x put in every browser's cookie. A request that
+        still carries it is exchanged once for its own session (admin, as before)."""
         path = self.studio.paths.web_token_file
         try:
             with open(path, encoding="utf-8") as handle:
@@ -89,19 +184,38 @@ class WebServer:
                 return token
         except OSError:
             pass
-        token = secrets.token_urlsafe(32)
+        token = secrets_token()
         storage.atomic_write_text(path, token + "\n", mode=0o600)
         return token
 
     def rotate_token(self) -> None:
-        token = secrets.token_urlsafe(32)
+        """Sign out every browser: all sessions, links, the pairing window and the old
+        shared token. (The LCD's *Sign out all computers*.)"""
+        token = secrets_token()
         storage.atomic_write_text(self.studio.paths.web_token_file, token + "\n", mode=0o600)
         self.token = token
+        self.sessions.revoke_all(by="device")
         self.studio.events.publish("web", {"rotated": True})
 
+    # ---------------------------------------------------------------- pairing
+    def open_pairing(self, role: Optional[str] = None):
+        return self.sessions.open_pairing(role or self.studio.settings.get("web.pair_role"))
+
+    def close_pairing(self) -> None:
+        self.sessions.close_pairing()
+
     def pair_code(self) -> str:
-        digest = hmac.new(self.token.encode(), b"pair", hashlib.sha256).digest()
-        return f"{int.from_bytes(digest[:4], 'big') % 1000000:06d}"
+        """The open pairing window's code, or "" (pairing is closed)."""
+        window = self.sessions.pairing()
+        return window.code if window is not None else ""
+
+    def pair_url(self) -> str:
+        """The QR link of the open pairing window (first network address), or ""."""
+        window = self.sessions.pairing()
+        urls = self.urls(lan_only=True)
+        if window is None or not urls:
+            return ""
+        return urls[0].rstrip("/") + "/?p=" + window.qr_token
 
     # -------------------------------------------------------------- lifetime
     def start(self) -> bool:
@@ -125,10 +239,11 @@ class WebServer:
         self.httpd = httpd
         self.port = httpd.server_address[1]
         self.running = True
+        self._hosts = (0.0, set())
         self.thread = threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.5},
                                        name="web", daemon=True)
         self.thread.start()
-        log.info("desktop IDE at %s", ", ".join(self.urls(with_token=False)))
+        log.info("desktop IDE at %s", ", ".join(self.urls()))
         self.studio.events.publish("web", {"running": True, "port": self.port})
         return True
 
@@ -144,17 +259,20 @@ class WebServer:
         self.stop()
         self.start()
 
-    def urls(self, with_token: bool = True, lan_only: bool = False) -> List[str]:
+    def urls(self, with_token: bool = False, lan_only: bool = False) -> List[str]:
+        """Addresses of the IDE (never with a secret; ``with_token`` is ignored since
+        0.2.0: use :meth:`local_url` or :meth:`pair_url`)."""
         if not self.running:
             return []
         hosts = [] if lan_only else ["127.0.0.1"]
         if self.host in ("0.0.0.0", "::"):
             hosts = local_addresses() + hosts
-        suffix = f"/?t={self.token}" if with_token else "/"
-        return [f"http://{h}:{self.port}{suffix}" for h in hosts]
+        return [f"http://{h}:{self.port}/" for h in hosts]
 
     def local_url(self) -> str:
-        return f"http://127.0.0.1:{self.port}/?t={self.token}"
+        """A single-use link (10 minutes) that opens the IDE with full access: for this
+        device's own browser, or printed by ``run.sh --desktop``."""
+        return f"http://127.0.0.1:{self.port}/?t={self.sessions.new_link('admin')}"
 
     def desktop_available(self) -> bool:
         return desktop.find_session() is not None
@@ -162,14 +280,27 @@ class WebServer:
     def open_browser(self) -> Tuple[bool, str]:
         return desktop.open_url(self.local_url())
 
+    def extra_hosts(self) -> List[str]:
+        raw = str(self.studio.settings.get("web.extra_hosts") or "")
+        return [h.strip().lower() for h in raw.split(",") if re.fullmatch(r"[A-Za-z0-9.\-]{1,253}",
+                                                                          h.strip())]
+
     def allowed_hosts(self) -> set:
+        now = time.monotonic()
+        stamp, cached = self._hosts
+        if cached and now - stamp < 10:
+            return cached
         port = self.port
         names = {"127.0.0.1", "localhost", "[::1]"}
         if self.host in ("0.0.0.0", "::"):
             names.update(local_addresses())
             hostname = socket.gethostname()
             names.update({hostname, f"{hostname}.local", f"{hostname}.lan"})
-        return {f"{n}:{port}" for n in names} | ({n for n in names} if port == 80 else set())
+        allowed = {f"{n}:{port}" for n in names} | ({n for n in names} if port == 80 else set())
+        for extra in self.extra_hosts():           # a TLS tunnel or proxy: any port
+            allowed.update({extra, f"{extra}:{port}", f"{extra}:443"})
+        self._hosts = (now, allowed)
+        return allowed
 
     def pair_allowed(self) -> bool:
         now = time.time()
@@ -180,6 +311,10 @@ class WebServer:
         return True
 
 
+def secrets_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
 def _make_handler(server: WebServer):
     studio = server.studio
 
@@ -187,6 +322,11 @@ def _make_handler(server: WebServer):
         protocol_version = "HTTP/1.1"
         server_version = "mCode"
         web = server
+        session = None
+
+        @property
+        def timeout(self):                     # read by StreamRequestHandler.setup()
+            return server.idle_timeout
 
         def log_message(self, fmt, *args):      # quiet: requests are not logged by default
             log.debug("%s %s", self.address_string(), fmt % args)
@@ -200,25 +340,60 @@ def _make_handler(server: WebServer):
                     return value
             return ""
 
-        def _authed(self) -> bool:
-            return hmac.compare_digest(self._cookie(), server.token)
+        def _address(self) -> str:
+            return self.client_address[0] if self.client_address else ""
+
+        def _secure(self) -> bool:
+            """Behind a TLS tunnel or proxy on this device (it says https)."""
+            return self.headers.get("X-Forwarded-Proto", "") == "https" and \
+                self._address() in ("127.0.0.1", "::1")
+
+        def _set_cookie(self, value: str) -> str:
+            return (f"{COOKIE}={value}; HttpOnly; SameSite=Strict; Path=/; "
+                    f"Max-Age={server.sessions.max_age()}" + ("; Secure" if self._secure() else ""))
+
+        def _authed(self):
+            """This request's session, or None. A 0.1.x cookie becomes a session once."""
+            value = self._cookie()
+            session = server.sessions.check(value, self._address())
+            if session is None and value and hmac.compare_digest(value.encode(),
+                                                                 server.token.encode()):
+                new, session = server.sessions.create(
+                    "admin", self.headers.get("User-Agent", ""), self._address(), "legacy")
+                self._pending_cookie = self._set_cookie(new)
+            self.session = session
+            return session
 
         def _host_ok(self) -> bool:
-            return self.headers.get("Host", "") in server.allowed_hosts()
+            return self.headers.get("Host", "").lower() in server.allowed_hosts()
+
+        def _origin_ok(self) -> bool:
+            origin = self.headers.get("Origin")
+            if not origin:
+                return True                    # same-origin GET/HEAD, curl, old browsers
+            parsed = urllib.parse.urlsplit(origin)
+            return parsed.scheme in ("http", "https") and \
+                parsed.netloc.lower() in server.allowed_hosts()
 
         def _send(self, status: int, body: bytes, ctype: str, headers: Optional[dict] = None):
+            headers = dict(headers or {})
+            pending = getattr(self, "_pending_cookie", None)
+            if pending and "Set-Cookie" not in headers:
+                headers["Set-Cookie"] = pending
+                self._pending_cookie = None
             self.send_response(status)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "no-referrer")
             self.send_header("X-Frame-Options", "DENY")
-            self.send_header("Cache-Control", "no-store")
+            self.send_header("Cache-Control", headers.pop("Cache-Control", "no-store"))
             self.send_header("Content-Security-Policy",
                              "default-src 'self'; img-src 'self' data:; style-src 'self' "
                              "'unsafe-inline'; script-src 'self'; connect-src 'self'; "
-                             "frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
-            for key, value in (headers or {}).items():
+                             "manifest-src 'self'; frame-ancestors 'none'; base-uri 'none'; "
+                             "form-action 'self'")
+            for key, value in headers.items():
                 self.send_header(key, value)
             self.end_headers()
             if self.command != "HEAD":
@@ -232,18 +407,21 @@ def _make_handler(server: WebServer):
             self._json({"error": message, "fix": fix}, status)
 
         def _body(self) -> dict:
+            if hasattr(self, "_parsed_body"):
+                return self._parsed_body
             length = int(self.headers.get("Content-Length") or 0)
             if length > MAX_BODY:
                 raise ApiError(413, "Request too large.")
             raw = self.rfile.read(length) if length else b""
-            if not raw:
-                return {}
-            try:
-                data = json.loads(raw.decode("utf-8"))
-            except ValueError:
-                raise ApiError(400, "Invalid JSON.") from None
-            if not isinstance(data, dict):
-                raise ApiError(400, "Expected a JSON object.")
+            data = {}
+            if raw:
+                try:
+                    data = json.loads(raw.decode("utf-8"))
+                except ValueError:
+                    raise ApiError(400, "Invalid JSON.") from None
+                if not isinstance(data, dict):
+                    raise ApiError(400, "Expected a JSON object.")
+            self._parsed_body = data
             return data
 
         # ------------------------------------------------------ dispatch
@@ -263,6 +441,7 @@ def _make_handler(server: WebServer):
             self._dispatch("DELETE")
 
         def _dispatch(self, method: str):
+            self._pending_cookie = None
             if not self._host_ok():
                 self._send(403, b"Unknown host name", "text/plain")
                 return
@@ -272,16 +451,33 @@ def _make_handler(server: WebServer):
             try:
                 if path.startswith("/static/"):
                     return self._static(path[len("/static/"):])
+                if path == "/manifest.webmanifest":
+                    return self._static("manifest.webmanifest")
                 if path in ("/", "/index.html"):
                     return self._index(query)
+                if method != "GET" and not self._origin_ok():
+                    return self._error(403, "This request came from another site.")
                 if path == "/api/pair" and method == "POST":
                     return self._pair()
                 if not path.startswith("/api/"):
                     return self._send(404, b"Not found", "text/plain")
-                if not self._authed():
-                    return self._error(401, "Sign in again: open the link shown on the device.")
+                session = self._authed()
+                if session is None:
+                    return self._error(401, "This browser is not paired (or was signed out). "
+                                            "Pair it again from the device's screen.")
                 if method != "GET" and self.headers.get("X-mCode") != "1":
                     return self._error(403, "Missing request header.")
+                parts = [p for p in path.split("/") if p][1:]
+                raw_upload = parts[:1] == ["zip"]          # the body is the zip itself
+                body = self._body() if method in ("POST", "DELETE") and not raw_upload else {}
+                need = required_role(method, parts, body)
+                if RANK[session.role] < RANK[need]:
+                    return self._error(403, f"This browser has {ROLE_LABELS[session.role]} "
+                                            f"access; this needs "
+                                            f"{'full access' if need == 'admin' else need}. "
+                                            "Pair it again with more access from the device, "
+                                            "or change it on the Security page of a browser "
+                                            "with full access.")
                 if path == "/api/events":
                     return self._events()
                 result = route(method, path, query, self)
@@ -296,30 +492,54 @@ def _make_handler(server: WebServer):
             except Exception as exc:
                 fix = getattr(exc, "fix", "")
                 if exc.__class__.__name__ in ("BackendError", "AIError", "SerialError",
-                                              "PortBusy", "SpeechError", "ValueError"):
+                                              "PortBusy", "SpeechError", "ValueError",
+                                              "RuntimeError"):
                     return self._error(400, str(exc), fix)
                 log.exception("API %s %s failed", method, path)
-                return self._error(500, f"{exc.__class__.__name__}: {exc}")
+                return self._error(500, "mCode could not do that because of an internal "
+                                        "error. Nothing else was changed. The details are in "
+                                        "mCode's log.")
 
         # ------------------------------------------------------- pages
         def _static(self, rel: str):
-            target = os.path.realpath(os.path.join(STATIC, rel))
-            if not target.startswith(os.path.realpath(STATIC) + os.sep) or not os.path.isfile(target):
+            entry = server.static.get(rel)
+            if entry is None:
                 return self._send(404, b"Not found", "text/plain")
-            ctype = mimetypes.guess_type(target)[0] or "application/octet-stream"
-            if ctype.startswith("text/") or ctype in ("application/javascript",):
-                ctype += "; charset=utf-8"
-            with open(target, "rb") as handle:
-                body = handle.read()
-            self._send(200, body, ctype, {"Cache-Control": "max-age=300"})
+            body, packed, ctype, etag = entry
+            headers = {"Cache-Control": "no-cache", "ETag": etag, "Vary": "Accept-Encoding"}
+            if self.headers.get("If-None-Match") == etag:
+                self.send_response(304)
+                for key, value in headers.items():
+                    self.send_header(key, value)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return None
+            if packed is not None and "gzip" in self.headers.get("Accept-Encoding", ""):
+                headers["Content-Encoding"] = "gzip"
+                body = packed
+            return self._send(200, body, ctype, headers)
+
+        def _login(self, value: str) -> None:
+            self._send(303, b"", "text/plain", {"Location": "/", "Set-Cookie":
+                                                 self._set_cookie(value)})
 
         def _index(self, query: dict):
-            token = query.get("t", "")
-            if token and hmac.compare_digest(token, server.token):
-                # One-time link: set the cookie, then drop the token from the address bar.
-                return self._send(303, b"", "text/plain", {
-                    "Location": "/", "Set-Cookie": f"{COOKIE}={server.token}; HttpOnly; "
-                                                   f"SameSite=Strict; Path=/; Max-Age=31536000"})
+            agent = self.headers.get("User-Agent", "")
+            if query.get("t"):
+                # Single-use link (this device's browser, or the address run.sh printed).
+                role = server.sessions.use_link(query["t"])
+                if role is not None:
+                    value, _ = server.sessions.create(role, agent, self._address(), "link")
+                    return self._login(value)
+                server.sessions.event("link-refused", address=self._address())
+                return self._send(303, b"", "text/plain", {"Location": "/?used=1"})
+            if query.get("p"):
+                if not server.pair_allowed():
+                    return self._send(303, b"", "text/plain", {"Location": "/?wait=1"})
+                paired = server.sessions.pair_with_qr(query["p"], agent, self._address())
+                if paired is not None:
+                    return self._login(paired[0])
+                return self._send(303, b"", "text/plain", {"Location": "/?used=1"})
             page = "index.html" if self._authed() else "pair.html"
             with open(os.path.join(STATIC, page), "rb") as handle:
                 body = handle.read()
@@ -329,13 +549,19 @@ def _make_handler(server: WebServer):
             if self.headers.get("X-mCode") != "1":
                 return self._error(403, "Missing request header.")
             if not server.pair_allowed():
+                server.sessions.event("pairing-rate-limited", address=self._address())
                 return self._error(429, "Too many tries. Wait a minute.")
+            if server.sessions.pairing() is None:
+                return self._error(403, "Pairing is closed. On the device open mCode › "
+                                        "Settings › Desktop IDE › Pair a computer, then type "
+                                        "the code it shows.")
             code = str(self._body().get("code", "")).strip()
-            if not hmac.compare_digest(code, server.pair_code()):
+            paired = server.sessions.pair_with_code(code, self.headers.get("User-Agent", ""),
+                                                    self._address())
+            if paired is None:
                 return self._error(403, "That code is not right. Look at the device's screen.")
-            self._json({"ok": True}, headers={
-                "Set-Cookie": f"{COOKIE}={server.token}; HttpOnly; SameSite=Strict; Path=/; "
-                              f"Max-Age=31536000"})
+            self._json({"ok": True, "role": paired[1].role},
+                       headers={"Set-Cookie": self._set_cookie(paired[0])})
 
         def _events(self):
             with server._sse_lock:
@@ -344,20 +570,28 @@ def _make_handler(server: WebServer):
                 server._sse += 1
             token, q = studio.events.subscribe_queue()
             try:
+                tune_stream_socket(self.connection)
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
                 self.send_header("Cache-Control", "no-store")
                 self.send_header("Connection", "keep-alive")
+                pending = getattr(self, "_pending_cookie", None)
+                if pending:
+                    self.send_header("Set-Cookie", pending)
                 self.end_headers()
                 self.wfile.write(b"retry: 2000\n\n")
                 self.wfile.flush()
                 while server.running:
+                    if self.session is not None and server.sessions.get(self.session.id) is None:
+                        break                   # signed out elsewhere: stop streaming
                     try:
                         topic, data, stamp = q.get(timeout=15)
                     except queue.Empty:
                         self.wfile.write(b": ping\n\n")
                         self.wfile.flush()
                         continue
+                    if topic == "terminal" and RANK[self.session.role] < RANK["admin"]:
+                        continue                # terminal output is for full access only
                     payload = json.dumps({"topic": topic, "data": data, "t": stamp},
                                          default=_default)
                     self.wfile.write(f"data: {payload}\n\n".encode())
@@ -388,21 +622,38 @@ def _default(value):
 def route(method: str, path: str, q: dict, handler):
     srv = handler.web
     studio = srv.studio
-    body = handler._body() if method in ("POST", "DELETE") else {}
+    session = handler.session
+    admin = session is not None and session.role == "admin"
     parts = [p for p in path.split("/") if p][1:]        # drop "api"
     head = parts[0] if parts else ""
+    # A zip import's body is the zip itself (reading it as JSON broke every import: A-18).
+    body = handler._body() if method in ("POST", "DELETE") and head != "zip" else {}
 
     def project(key=None):
-        return studio.project(key or body.get("project_id") or q.get("project") or None)
+        key = key or body.get("project_id") or q.get("project") or None
+        if key and ("/" in key or key.startswith("~")) and not admin:
+            # A folder path reaches anything on the device: full access only (A-16).
+            raise ApiError(403, "Opening a folder by its path needs full access.")
+        return studio.project(key)
 
+    # ---------------------------------------------------------- session
+    if head == "session":
+        if parts[1:2] == ["logout"] and method != "GET":
+            srv.sessions.revoke(session.id, by="itself")
+            return ("__raw__", b'{"ok": true}', "application/json",
+                    {"Set-Cookie": f"{COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"})
+        return {"session": session.to_dict(), "roles": {r: ROLE_LABELS[r] for r in ROLES}}
+    if head == "security":
+        return _security(srv, session, method, parts, body)
     # ------------------------------------------------------------ state
     if head == "state" and method == "GET":
         summary = studio.summary()
+        summary["session"] = session.to_dict() if session is not None else None
         summary["tools"] = [t.to_dict() for t in studio.tools.all()]
         summary["recent_builds"] = studio.builds.recent(8)
         summary["recent_uploads"] = studio.uploads.history(8) if studio.uploads else []
         summary["recent"] = [p.summary() for p in studio.projects.recent(6)]
-        summary["web"] = {"lan": studio.settings.get("web.lan"), "urls": srv.urls(False),
+        summary["web"] = {"lan": studio.settings.get("web.lan"), "urls": srv.urls(),
                           "desktop": srv.desktop_available()}
         summary["voice"] = studio.voice.status() if studio.voice else None
         return summary
@@ -410,6 +661,7 @@ def route(method: str, path: str, q: dict, handler):
         if method == "GET":
             return {"fields": studio.settings.describe()}
         errors = studio.settings.update(body.get("values") or {})
+        srv._hosts = (0.0, set())
         if "web.lan" in (body.get("values") or {}) and not errors.get("web.lan"):
             threading.Thread(target=srv.restart, daemon=True).start()
         return {"errors": errors, "fields": studio.settings.describe()}
@@ -433,7 +685,13 @@ def route(method: str, path: str, q: dict, handler):
     # --------------------------------------------------------- projects
     if head == "projects":
         if method == "GET":
-            return {"root": studio.projects.root,
+            builds = {}
+            for record in studio.builds.recent(300):        # newest first: one per project
+                if record.get("action") != "clean" and record.get("project_id") not in builds:
+                    builds[record.get("project_id")] = {"state": record.get("state"),
+                                                        "time": record.get("time"),
+                                                        "action": record.get("action")}
+            return {"root": studio.projects.root, "builds": builds,
                     "projects": [p.summary() for p in studio.projects.search(q.get("q", ""))],
                     "current": (studio.projects.current().summary()
                                 if studio.projects.current() else None)}
@@ -725,9 +983,52 @@ def route(method: str, path: str, q: dict, handler):
         if parts[1:2] == ["open-desktop"]:
             ok, why = srv.open_browser()
             return {"ok": ok, "error": why}
-        return {"urls": srv.urls(False), "lan": studio.settings.get("web.lan"),
+        return {"urls": srv.urls(), "lan": studio.settings.get("web.lan"),
                 "desktop": srv.desktop_available()}
     raise ApiError(404, f"Unknown API {method} {path}")
+
+
+def _security(srv: WebServer, session, method: str, parts: List[str], body: dict) -> dict:
+    """The Security page: sessions, pairing, network access, recent events (admin)."""
+    store = srv.sessions
+    act = parts[1] if len(parts) > 1 else ""
+    if method != "GET":
+        if act == "revoke":
+            target = str(body.get("id", ""))
+            if not store.revoke(target, by=session.id):
+                raise ApiError(404, "That browser is not paired any more.")
+        elif act == "revoke-others":
+            store.revoke_all(keep=session.id, by=session.id)
+        elif act == "role":
+            target, role = str(body.get("id", "")), str(body.get("role", ""))
+            if target == session.id and role != "admin":
+                raise ApiError(400, "Lower your own access from another browser with full "
+                                    "access, or sign this browser out.")
+            if role not in ROLES or not store.set_role(target, role, by=session.id):
+                raise ApiError(400, "Unknown browser or access level.")
+        elif act == "pair":
+            if parts[2:3] == ["close"]:
+                store.close_pairing()
+            else:
+                if not srv.studio.settings.get("web.lan"):
+                    raise ApiError(400, "Switch on Use from a computer first (Settings › "
+                                        "Interface › Allow computers on the network).")
+                srv.open_pairing(str(body.get("role") or "") or None)
+        else:
+            raise ApiError(404, "Unknown security action.")
+    window = store.pairing()
+    pair = window.to_dict() if window is not None else {"open": False}
+    if window is not None:
+        url = srv.pair_url()
+        from ..lcd import qr
+        pair.update(url=url, qr=["".join("1" if cell else "0" for cell in row)
+                                 for row in qr.matrix(url)] if url else [])
+    return {"sessions": store.list(), "me": session.id, "events": store.events(40),
+            "pairing": pair, "roles": {r: ROLE_LABELS[r] for r in ROLES},
+            "network": {"lan": bool(srv.studio.settings.get("web.lan")), "urls": srv.urls(),
+                        "extra_hosts": srv.extra_hosts(), "https": False,
+                        "session_days": srv.studio.settings.get("web.session_days"),
+                        "pair_role": srv.studio.settings.get("web.pair_role")}}
 
 
 def _search(root: str, query: str, regex: bool) -> list:
@@ -794,6 +1095,8 @@ def _import_zip(studio, handler) -> dict:
         else ""
     total = 0
     tmp = dest + ".importing"
+    if os.path.isdir(tmp) and not os.path.islink(tmp):
+        shutil.rmtree(tmp)                  # left by an import that was interrupted (A-11)
     os.makedirs(tmp)
     try:
         for info in archive.infolist():
@@ -805,16 +1108,19 @@ def _import_zip(studio, handler) -> dict:
                 raise ApiError(400, f"Unsafe path in zip: {info.filename}")
             if (info.external_attr >> 16) & 0o170000 == 0o120000:
                 raise ApiError(400, f"The zip contains a link: {info.filename}")
-            total += info.file_size
-            if total > 256 * 1024 * 1024:
-                raise ApiError(400, "The zip expands to more than 256 MB.")
             target = pfiles.resolve(tmp, rel)
             os.makedirs(os.path.dirname(target), exist_ok=True)
             with archive.open(info) as source, open(target, "wb") as out:
-                out.write(source.read())
+                while True:                 # streamed; the size is counted, not trusted
+                    block = source.read(1 << 16)
+                    if not block:
+                        break
+                    total += len(block)
+                    if total > MAX_ZIP_EXPANDED:
+                        raise ApiError(400, "The zip expands to more than 256 MB.")
+                    out.write(block)
         os.replace(tmp, dest)
     except Exception:
-        import shutil
         shutil.rmtree(tmp, ignore_errors=True)
         raise
     return {"project": studio.projects.open(dest).summary()}

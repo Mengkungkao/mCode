@@ -46,6 +46,19 @@ async function api(method, path, body) {
 const GET = (p) => api("GET", p);
 const POST = (p, b) => api("POST", p, b || {});
 
+const isPhone = () => document.body.classList.contains("layout-phone");
+const coarse = () => window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+const scripts = {};
+function loadScript(src) {
+  // Large libraries load when first needed (xterm.js is ~480 KB).
+  if (!scripts[src]) scripts[src] = new Promise((resolve, reject) => {
+    const el = document.createElement("script"); el.src = src; el.onload = resolve;
+    el.onerror = () => { delete scripts[src]; reject(new Error("Could not load " + src)); };
+    document.head.appendChild(el);
+  });
+  return scripts[src];
+}
+
 function toast(text, tone = "", ms = 4000) {
   const el = h("div", {class: "toast " + tone}, text);
   $("#toasts").appendChild(el);
@@ -105,6 +118,8 @@ function makeEditor() {
   cm = CodeMirror($("#editor-host"), {
     theme: "mcode", lineNumbers: true, foldGutter: true, gutters: ["CodeMirror-linenumbers", "diag", "CodeMirror-foldgutter"],
     matchBrackets: true, autoCloseBrackets: true, styleActiveLine: true, indentUnit: 2, tabSize: 2,
+    inputStyle: coarse() ? "contenteditable" : "textarea", spellcheck: false, autocorrect: false, autocapitalize: false,
+    lineWrapping: window.matchMedia("(max-width: 760px)").matches,
     extraKeys: {
       "Ctrl-S": () => saveFile(), "Cmd-S": () => saveFile(), "Shift-Ctrl-S": () => saveAs(),
       "Ctrl-Space": "autocomplete",
@@ -115,14 +130,17 @@ function makeEditor() {
     hintOptions: {hint, completeSingle: false},
   });
   cm.on("cursorActivity", () => { const p = cm.getCursor(); $("#sb-cursor").textContent = `Ln ${p.line + 1}, Col ${p.ch + 1}`; });
-  cm.on("inputRead", (c, change) => { if (/[\w.]/.test(change.text[0]) && store.get("complete", true)) c.showHint({completeSingle: false}); });
+  cm.on("inputRead", (c, change) => { if (/[\w.]/.test(change.text[0]) && store.get("complete", !coarse())) c.showHint({completeSingle: false}); });
   applyEditorSettings();
 }
+const LIGHT = window.matchMedia("(prefers-color-scheme: light)");
+function resolvedTheme() { const t = S.settings["ui.theme"] || "dark"; return t === "auto" ? (LIGHT.matches ? "light" : "dark") : t; }
 function applyEditorSettings() {
-  document.documentElement.dataset.theme = S.settings["ui.theme"] || "dark";
+  document.documentElement.dataset.theme = resolvedTheme();
   document.documentElement.style.setProperty("--font-size", (S.settings["ui.font_size"] || 14) + "px");
   const main = $("#main");
-  const layout = S.settings["ui.layout"] || "ai-right";
+  // The phone shows the AI Engineer as its own screen: always the side position.
+  const layout = isPhone() ? "ai-right" : S.settings["ui.layout"] || "ai-right";
   main.classList.toggle("ai-left", layout === "ai-left");
   const ai = $("#ai"); const tabs = $("#bottom-tabs");
   let tab = $('#bottom-tabs button[data-panel="ai"]');
@@ -158,7 +176,12 @@ async function init() {
   connectEvents();
   setView(S.view);
   setInterval(tickJobStatus, 1000);
+  const onTheme = () => { if ((S.settings["ui.theme"] || "") === "auto") applyEditorSettings(); };
+  LIGHT.addEventListener ? LIGHT.addEventListener("change", onTheme) : LIGHT.addListener(onTheme);
+  // Back from the background (a phone waking up): the state may be old.
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && Date.now() - lastEvent > 20000) resync(); });
 }
+function resync() { refreshState(); if (S.project) loadProject(S.project.id); if (S.monitor.connected || S.monitor.suspended) loadMonitor(); }
 
 async function loadSettings() {
   const data = await GET("settings");
@@ -184,6 +207,14 @@ async function refreshState() {
   else if (!proj) { S.project = null; renderProjectPick(); }
   renderDevicePick(); renderClaudePill(); renderAI(); renderDashboard();
   if (S.view !== "dashboard" && S.view !== "explorer") renderSide();
+  applyRole();
+  if (typeof mRefresh === "function") mRefresh();
+}
+function applyRole() {
+  // Only browsers with full access get the terminal (the server enforces it too).
+  const admin = S.state && S.state.session && S.state.session.role === "admin";
+  const tab = $('#bottom-tabs button[data-panel="terminal"]');
+  if (tab) tab.classList.toggle("hidden", !admin);
 }
 
 async function loadProject(id) {
@@ -198,11 +229,18 @@ async function loadProject(id) {
 
 // ------------------------------------------------------------------ events
 let events = null;
+let lastEvent = Date.now();
+let streamLost = false;
 function connectEvents() {
   events = new EventSource("/api/events");
-  events.onopen = () => $("#sb-conn").classList.remove("off");
-  events.onerror = () => $("#sb-conn").classList.add("off");
-  events.onmessage = (e) => { try { const m = JSON.parse(e.data); onEvent(m.topic, m.data); } catch (err) { console.error(err); } };
+  events.onopen = () => {
+    $("#sb-conn").classList.remove("off");
+    // EventSource reconnects by itself but events sent meanwhile are lost (A-12).
+    if (streamLost) { streamLost = false; resync(); }
+    lastEvent = Date.now();
+  };
+  events.onerror = () => { $("#sb-conn").classList.add("off"); streamLost = true; };
+  events.onmessage = (e) => { lastEvent = Date.now(); try { const m = JSON.parse(e.data); onEvent(m.topic, m.data); } catch (err) { console.error(err); } };
 }
 const debounced = {};
 function later(key, fn, ms = 250) { clearTimeout(debounced[key]); debounced[key] = setTimeout(fn, ms); }
@@ -223,7 +261,9 @@ function onEvent(topic, data) {
     case "terminal": onTerminal(data); break;
     case "toast": toast(data.text, data.tone === "error" ? "err" : data.tone === "success" ? "ok" : ""); break;
     case "libraries": if (S.view === "libraries") later("side", renderSide, 300); toast(`Library ${data.name}: ${data.state}`, data.state === "succeeded" ? "ok" : "err"); break;
+    case "security": case "web": if (typeof M !== "undefined" && M.securityOpen) later("security", () => renderSecurity(), 300); break;
   }
+  if (isPhone() && ["devices", "projects", "build", "upload", "ai", "tools", "tools.installed", "settings", "monitor.state", "web", "security"].includes(topic)) mRefresh();
 }
 async function onProjects() {
   const data = await GET("projects");
@@ -235,6 +275,9 @@ async function onProjects() {
 // -------------------------------------------------------------------- jobs
 function onJob(job) {
   S.jobs.set(job.id, job);
+  if (S.jobs.size > 60) {         // keep recent jobs only (A-13)
+    for (const [id, j] of S.jobs) { if (S.jobs.size <= 40) break; if (!["running", "queued"].includes(j.state)) S.jobs.delete(id); }
+  }
   if (S.project && job.project_id === S.project.id && ["build", "rebuild", "clean", "test", "check", "upload", "erase", "identify"].includes(job.kind)) {
     if (job.state === "running" && S.outputJob !== job.id) { S.outputJob = job.id; $("#output").textContent = ""; showPanel("output"); }
   } else if (["install", "install-lib", "uninstall-lib", "update-lib", "clone"].includes(job.kind) && job.state === "running" && S.outputJob !== job.id) {
@@ -242,19 +285,37 @@ function onJob(job) {
   }
   tickJobStatus();
 }
+let pendingLines = [];
 function onJobLine(d) {
   if (d.id !== S.outputJob) return;
+  // One DOM update and one scroll per frame, not per line (A-13): builds print thousands.
+  pendingLines.push(d);
+  if (pendingLines.length === 1) requestAnimationFrame(flushLines);
+}
+function flushLines() {
+  const lines = pendingLines; pendingLines = [];
   const out = $("#output");
-  if (d.cr && out.lastChild && out.lastChild.dataset && out.lastChild.dataset.cr) out.lastChild.remove();
-  const cls = /error|failed|fatal/i.test(d.line) ? "l-err" : /warning/i.test(d.line) ? "l-warn" : /^\$ /.test(d.line) ? "l-cmd" : /succe|verified|done/i.test(d.line) ? "l-ok" : "";
-  const span = h("span", {class: cls}, d.line + "\n");
-  if (d.cr) span.dataset.cr = "1";
-  out.appendChild(span);
-  while (out.childNodes.length > 4000) out.firstChild.remove();
-  out.scrollTop = out.scrollHeight;
+  const stick = out.scrollHeight - out.scrollTop - out.clientHeight < 40;
+  const frag = document.createDocumentFragment();
+  for (const d of lines) {
+    if (d.cr) {
+      const last = frag.lastChild || out.lastChild;
+      if (last && last.dataset && last.dataset.cr) last.remove();
+    }
+    const cls = /error|failed|fatal/i.test(d.line) ? "l-err" : /warning/i.test(d.line) ? "l-warn" : /^\$ /.test(d.line) ? "l-cmd" : /succe|verified|done/i.test(d.line) ? "l-ok" : "";
+    const span = h("span", {class: cls}, d.line + "\n");
+    if (d.cr) span.dataset.cr = "1";
+    frag.appendChild(span);
+  }
+  out.appendChild(frag);
+  let extra = out.childNodes.length - 4000;
+  while (extra-- > 0) out.firstChild.remove();
+  if (stick) out.scrollTop = out.scrollHeight;
 }
 function tickJobStatus() {
+  if (typeof renderJobBar === "function") renderJobBar();
   const running = Array.from(S.jobs.values()).filter((j) => j.state === "running" || j.state === "queued");
+  if (isPhone() && M.view === "build" && (running.length > 0) !== !!tickJobStatus.busy) { tickJobStatus.busy = running.length > 0; renderHeader(); }
   const el = $("#job-status");
   if (!running.length) { el.textContent = ""; $("#job-cancel").classList.add("hidden"); $("#sb-left").textContent = S.project ? `${S.project.name} · ${S.project.board_name}` : "No project"; return; }
   const job = running[running.length - 1];
@@ -395,6 +456,15 @@ function renderExplorer(body) {
       else openFile(entry.path);
     });
     row.addEventListener("contextmenu", (ev) => { ev.preventDefault(); fileMenu(row, entry); });
+    if (coarse()) {
+      // No right-click on a touch screen: a ⋯ button and a long press open the same menu.
+      row.appendChild(h("button", {class: "more", "aria-label": "Actions for " + name, onclick: (ev) => { ev.stopPropagation(); fileMenu(row, entry); }}, "⋯"));
+      let timer = null;
+      row.addEventListener("touchstart", () => { timer = setTimeout(() => { timer = "fired"; fileMenu(row, entry); }, 550); }, {passive: true});
+      const cancel = () => { if (timer && timer !== "fired") clearTimeout(timer); };
+      row.addEventListener("touchmove", cancel, {passive: true});
+      row.addEventListener("touchend", (ev) => { if (timer === "fired") ev.preventDefault(); cancel(); timer = null; });
+    }
     rows.push(row);
   }
   rows.forEach((r) => body.appendChild(r));
@@ -460,10 +530,11 @@ async function openFile(path, line) {
     try { data = await GET(`project/${S.project.id}/file?path=${encodeURIComponent(path)}`); } catch (e) { fail(e); return; }
     const doc = CodeMirror.Doc(data.text, MODES[data.language] || "text/plain");
     const entry = {doc, sha: data.sha, dirty: false, language: data.language, path: data.path};
-    doc.on("change", () => { if (!entry.dirty) { entry.dirty = true; markTabs(); } if (store.get("autosave", true)) later("save:" + path, () => saveFile(path, true), 1500); });
+    doc.on("change", () => { if (!entry.dirty) { entry.dirty = true; markTabs(); if (isPhone()) renderHeader(); } if (store.get("autosave", true)) later("save:" + path, () => saveFile(path, true), 1500); });
     S.files.set(path, entry);
   }
   switchTo(path);
+  if (isPhone()) mShow("editor");
   if (line) { cm.setCursor({line: line - 1, ch: 0}); cm.scrollIntoView({line: line - 1, ch: 0}, 120); }
 }
 function switchTo(path) {
@@ -477,7 +548,7 @@ function switchTo(path) {
   markTabs(); markDiagnostics();
   $$(".tree-row").forEach((r) => r.classList.toggle("active", r.title === path));
   setTimeout(() => cm.refresh(), 0);
-  cm.focus();
+  if (!isPhone()) cm.focus();         // on a phone the keyboard waits for a tap
 }
 function showEditor() { $("#dashboard").classList.add("hidden"); $("#editor-host").classList.remove("hidden"); cm.refresh(); }
 function closeTab(path, force) {
@@ -505,7 +576,7 @@ async function saveFile(path, auto) {
     try {
       const res = await POST(`project/${S.project.id}/file`, {path, text, sha: f.sha});
       f.sha = res.sha;
-      if (f.doc.getValue() === text) { f.dirty = false; markTabs(); }
+      if (f.doc.getValue() === text) { f.dirty = false; markTabs(); if (isPhone()) renderHeader(); }
       if (!auto) toast("Saved " + path.split("/").pop(), "ok", 1500);
     } catch (e) {
       if (/changed on disk/.test(e.message)) conflictDialog(path, f); else fail(e);
@@ -660,6 +731,7 @@ async function flashDialog(action = "upload") {
 
 // ---------------------------------------------------------------- dashboard
 function renderDashboard() {
+  if (isPhone()) { mRefresh(); return; }
   if (S.view !== "dashboard" || !S.state) return;
   const st = S.state; const d = $("#dashboard"); d.innerHTML = "";
   const ai = S.ai || st.claude || {};
@@ -859,8 +931,24 @@ function md(text) {
   }).join("");
   return s.replace(/\u0000(\d+)\u0000/g, (_, i) => `<pre><code>${blocks[Number(i)]}</code></pre>`);
 }
+const MODE_NOTES = {
+  ask: ["Ask before changes", "Claude works on a copy; you approve each change. No builds."],
+  assisted: ["Assisted", "Claude edits and builds; tests on this device run its code. Undo is there."],
+  advanced: ["Advanced", "Assisted plus static analysis and git commits through mCode."],
+};
+function renderModeNote() {
+  const mode = S.settings["ai.mode"] || "ask";
+  const [name, text] = MODE_NOTES[mode] || ["", ""];
+  const el = $("#ai-mode-note"); el.innerHTML = "";
+  el.append(h("b", {}, name + ": "), text + " Flashing always asks you.");
+}
+async function setAiMode(mode) {
+  try { await POST("settings", {values: {"ai.mode": mode}}); S.settings["ai.mode"] = mode; $("#ai-mode").value = mode; renderModeNote(); toast("AI mode: " + MODE_NOTES[mode][0], "ok"); if (isPhone()) renderHeader(); }
+  catch (e) { fail(e); }
+}
 function renderAI() {
   renderClaudePill();
+  renderModeNote();
   const body = $("#ai-body"); body.innerHTML = "";
   const setup = aiStatusBlock();
   $("#ai-mode").value = S.settings["ai.mode"] || "ask";
@@ -868,11 +956,17 @@ function renderAI() {
   if (S.ai.memory_warning) body.appendChild(h("div", {class: "msg system warn"}, S.ai.memory_warning));
   if (S.ai.auth && S.ai.auth.note) body.appendChild(h("div", {class: "msg system warn"}, S.ai.auth.note));
   if (!S.conversation.length) body.appendChild(h("div", {class: "msg system"}, "Ask Claude to create firmware, explain code, fix the build, write tests or document the wiring. It works on this project's files."));
-  for (const m of S.conversation) {
-    if (m.role === "user") body.appendChild(h("div", {class: "msg user"}, m.text, h("div", {class: "meta"}, `${m.source || ""} · ${fmtTime(m.time)}`)));
-    else body.appendChild(h("div", {class: "msg assistant"}, h("div", {html: md(m.text)}), m.summary ? h("div", {class: "summary"}, m.summary) : null,
+  const working = S.turn && S.turn.state === "working";
+  S.conversation.forEach((m, i) => {
+    if (m.role === "user") { body.appendChild(h("div", {class: "msg user"}, m.text, h("div", {class: "meta"}, `${m.source || ""} · ${fmtTime(m.time)}`))); return; }
+    const last = i === S.conversation.length - 1;
+    const asked = S.conversation.slice(0, i).reverse().find((x) => x.role === "user");
+    const retry = last && !working && asked && ["error", "cancelled"].includes(m.state) ?
+      h("button", {class: "btn small retry", onclick: () => aiAsk(asked.kind && asked.kind !== "chat" ? "" : asked.text, asked.kind || "chat")}, "↻ Try again") : null;
+    body.appendChild(h("div", {class: "msg assistant"}, h("div", {html: md(m.text)}), m.summary ? h("div", {class: "summary"}, m.summary) : null,
+      (m.notices || []).map((n) => h("div", {class: "notice"}, "⚠ " + n)), retry,
       h("div", {class: "meta"}, [m.state, m.changes && m.changes.length ? `${m.changes.length} file(s)` : "", m.cost_usd ? `$${Number(m.cost_usd).toFixed(4)}` : "", fmtTime(m.time)].filter(Boolean).join(" · "))));
-  }
+  });
   body.scrollTop = body.scrollHeight;
   renderTurn(); renderReview();
 }
@@ -939,9 +1033,25 @@ async function aiAsk(text, kind = "chat") {
     S.turn = turn; $("#ai-text").value = ""; S.attachments = []; renderAttachments(); loadConversation();
   } catch (e) { fail(e); }
 }
+const AI_PROMPTS = {
+  performance: "Find the biggest speed, memory and power problems in this firmware (blocking delays, heap use, ISR work, busy loops) and propose fixes, most important first.",
+  security: "Review this firmware for security problems: credentials or keys in the code, buffer overflows, unchecked input from serial, Wi-Fi or Bluetooth, OTA updates without verification, debug interfaces left open. List findings first, most serious first; change code only if I ask.",
+};
 function aiKind(kind) {
   const texts = {"fix-build": "Fix the build errors.", "analyze-serial": "What is happening on the board?", review: "Review this project.", wiring: "Write the wiring document."};
-  aiAsk($("#ai-text").value.trim() || texts[kind], kind);
+  const typed = $("#ai-text").value.trim();
+  if (kind === "create") {                     // the user says what to build
+    const box = $("#ai-text");
+    if (!typed) { box.value = "Create firmware that "; box.focus(); box.setSelectionRange(box.value.length, box.value.length); return; }
+    aiAsk(typed); return;
+  }
+  if (kind === "explain") {
+    if (S.active) attach({type: "file", path: S.active});
+    aiAsk(typed || (S.active ? `Explain what ${S.active} does, step by step, for someone new to embedded code.` : "Explain how this project's code works, file by file, for someone new to embedded code."));
+    return;
+  }
+  if (AI_PROMPTS[kind]) { aiAsk(typed ? typed + "\n\n" + AI_PROMPTS[kind] : AI_PROMPTS[kind]); return; }
+  aiAsk(typed || texts[kind], kind);
 }
 function attach(a) { if (!S.attachments.some((x) => x.type === a.type && x.path === a.path)) S.attachments.push(a); renderAttachments(); }
 function renderAttachments() {
@@ -1117,22 +1227,26 @@ async function backupsDialog() {
 
 // ---------------------------------------------------------------- settings
 function settingsDialog() {
-  const box = h("div", {}, h("h2", {}, "Settings"));
+  const admin = S.state && S.state.session && S.state.session.role === "admin";
+  const box = h("div", {}, h("h2", {}, "Settings"), h("p", {class: "desc"}, h("a", {class: "linkish", onclick: () => { closeModal(); securityDialog(); }}, "Security and paired browsers →")));
+  if (!admin) box.appendChild(h("p", {class: "desc"}, "Settings marked “full access” can only be changed from a browser with full access (the device's own browser, or one paired with full access)."));
   const values = {};
   let section = "";
   const form = h("div", {class: "form"});
   for (const f of S.fields) {
     if (f.section !== section) { section = f.section; form.appendChild(h("div", {class: "settings-section full"}, section)); }
+    const locked = f.admin && !admin;
     let input;
     if (f.kind === "bool") { input = h("input", {type: "checkbox", checked: f.value}); input.addEventListener("change", () => { values[f.key] = input.checked; }); input = h("label", {}, input, "on"); }
     else if (f.choices && f.choices.length) { input = h("select", {}, f.choices.map((c) => h("option", {value: c, selected: c === f.value}, f.choice_labels[c] || (c === 0 ? "Default" : c)))); input.addEventListener("change", () => { values[f.key] = f.kind === "int" ? Number(input.value) : input.value; }); }
     else { input = h("input", {value: f.value, type: f.kind === "int" ? "number" : "text"}); input.addEventListener("change", () => { values[f.key] = f.kind === "int" ? Number(input.value) : input.value; }); }
-    form.appendChild(h("span", {}, f.label)); form.appendChild(input);
+    if (locked) (input.matches("input,select,textarea") ? [input] : Array.from(input.querySelectorAll("input,select,textarea"))).forEach((el) => { el.disabled = true; });
+    form.appendChild(h("span", {}, f.label, f.admin ? h("span", {class: "badge" + (admin ? " admin" : ""), style: "margin-left:6px", title: "Needs full access"}, "full access") : null)); form.appendChild(input);
     if (f.help) form.appendChild(h("span", {class: "help"}, f.help));
   }
   const editor = h("div", {class: "form"}, h("div", {class: "settings-section full"}, "This browser"));
   const autosave = h("input", {type: "checkbox", checked: store.get("autosave", true)}); autosave.addEventListener("change", () => store.set("autosave", autosave.checked));
-  const complete = h("input", {type: "checkbox", checked: store.get("complete", true)}); complete.addEventListener("change", () => store.set("complete", complete.checked));
+  const complete = h("input", {type: "checkbox", checked: store.get("complete", !coarse())}); complete.addEventListener("change", () => store.set("complete", complete.checked));
   editor.append(h("span", {}, "Automatic saving"), h("label", {}, autosave, "save 1.5 s after typing stops"), h("span", {}, "Suggestions while typing"), h("label", {}, complete, "on"));
   box.append(form, editor, h("div", {class: "buttons"}, h("button", {class: "btn", onclick: closeModal}, "Cancel"), h("button", {class: "btn primary", onclick: async () => {
     try { const r = await POST("settings", {values}); const errs = Object.values(r.errors || {}); if (errs.length) toast(errs.join("; "), "err", 8000); else toast("Settings saved", "ok"); closeModal(); await loadSettings(); } catch (e) { fail(e); }
@@ -1188,6 +1302,7 @@ async function loadMonitor() {
 // --------------------------------------------------------------- terminal
 async function newTerminal() {
   if (!S.project) { toast("Open a project first.", "warn"); return; }
+  try { await loadScript("/static/vendor/xterm/xterm.js"); await loadScript("/static/vendor/xterm/addon-fit.js"); } catch (e) { fail(e); return; }
   let session;
   try { session = await POST("term/open", {project_id: S.project.id}); } catch (e) { fail(e); return; }
   const host = h("div", {});
@@ -1246,7 +1361,7 @@ function restoreLayout() {
   if (sizes.bottom) $("#bottom").style.height = sizes.bottom + "px";
   if (store.get("noai", false)) document.body.classList.add("no-ai");
   if (store.get("nobottom", false)) document.body.classList.add("no-bottom");
-  $$(".gutter").forEach((g) => g.addEventListener("mousedown", (ev) => startResize(ev, g.dataset.resize)));
+  $$(".gutter").forEach((g) => g.addEventListener("pointerdown", (ev) => startResize(ev, g.dataset.resize)));
 }
 function startResize(ev, what) {
   ev.preventDefault();
@@ -1261,8 +1376,8 @@ function startResize(ev, what) {
     el.style[what === "bottom" ? "height" : "width"] = next + "px";
     if (cm) cm.refresh();
   };
-  const up = () => { document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", up); const sizes = store.get("sizes", {}); sizes[what] = what === "bottom" ? el.offsetHeight : el.offsetWidth; store.set("sizes", sizes); for (const t of S.terms.values()) t.resize(); };
-  document.addEventListener("mousemove", move); document.addEventListener("mouseup", up);
+  const up = () => { document.removeEventListener("pointermove", move); document.removeEventListener("pointerup", up); document.removeEventListener("pointercancel", up); const sizes = store.get("sizes", {}); sizes[what] = what === "bottom" ? el.offsetHeight : el.offsetWidth; store.set("sizes", sizes); for (const t of S.terms.values()) t.resize(); };
+  document.addEventListener("pointermove", move); document.addEventListener("pointerup", up); document.addEventListener("pointercancel", up);
 }
 
 // ------------------------------------------------------------------ modal
@@ -1284,7 +1399,8 @@ function bindChrome() {
     {label: "Static analysis", run: () => runBuild("check")}, "-",
     {label: "Identify the chip (ESP32)", run: () => S.selectedPort ? identify(S.selectedPort) : toast("Choose a board first.", "warn")},
     {label: "Erase flash (ESP32)…", run: () => flashDialog("erase")}, "-",
-    {label: "Open the IDE on the HDMI desktop", run: async () => { const r = await POST("web/open-desktop"); toast(r.ok ? "Opening…" : r.error, r.ok ? "ok" : "warn"); }},
+    {label: "Open the IDE on the HDMI desktop", run: async () => { try { const r = await POST("web/open-desktop"); toast(r.ok ? "Opening…" : r.error, r.ok ? "ok" : "warn"); } catch (e) { fail(e); } }},
+    {label: "Security and paired browsers…", run: securityDialog},
   ]); });
   $("#btn-settings").addEventListener("click", settingsDialog);
   $("#claude-pill").addEventListener("click", claudeDialog);
@@ -1301,7 +1417,8 @@ function bindChrome() {
   $("#ai-attach-file").addEventListener("click", () => S.active ? attach({type: "file", path: S.active}) : toast("Open a file first.", "warn"));
   $("#ai-attach-serial").addEventListener("click", () => attach({type: "serial", path: "serial"}));
   $$("#ai-quick button").forEach((b) => b.addEventListener("click", () => aiKind(b.dataset.kind)));
-  $("#ai-mode").addEventListener("change", () => POST("settings", {values: {"ai.mode": $("#ai-mode").value}}).then(() => { S.settings["ai.mode"] = $("#ai-mode").value; toast("AI mode: " + $("#ai-mode").selectedOptions[0].textContent, "ok"); }).catch(fail));
+  $("#ai-mode").addEventListener("change", () => setAiMode($("#ai-mode").value));
+  $("#ai-mode-note").addEventListener("click", () => (typeof modeSheet === "function" ? modeSheet() : null));
   $("#ai-new").addEventListener("click", () => S.project && confirmDialog("New conversation?", "Claude forgets this project's conversation (the files stay).", "Start over", () => POST(`ai/${S.project.id}/clear`).then(loadConversation).catch(fail)));
   $("#modal-back").addEventListener("click", (e) => { if (e.target.id === "modal-back") closeModal(); });
   document.addEventListener("keydown", (e) => {
@@ -1327,7 +1444,7 @@ function bindChrome() {
   const send = () => POST("monitor/send", {text: $("#serial-input").value, ending: $("#serial-ending").value, hex: $("#serial-send-hex").checked}).then(() => { $("#serial-input").value = ""; }).catch(fail);
   $("#serial-send").addEventListener("click", send);
   $("#serial-input").addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
-  window.addEventListener("resize", () => { if (cm) cm.refresh(); for (const t of S.terms.values()) t.resize(); });
+  window.addEventListener("resize", () => later("resize", () => { if (cm) cm.refresh(); for (const t of S.terms.values()) t.resize(); }, 120));
   window.addEventListener("beforeunload", (e) => { if (Array.from(S.files.values()).some((f) => f.dirty)) { e.preventDefault(); e.returnValue = ""; } });
 }
 

@@ -43,6 +43,12 @@ class Field:
     maximum: Optional[int] = None
     lcd: bool = False               # offered on the small screen (simple settings)
     secret: bool = False
+    admin: bool = False             # only browsers with full access may change it
+
+    @property
+    def needs_admin(self) -> bool:
+        """Programs and folders mCode uses, network and device settings."""
+        return self.admin or self.kind == "path"
 
     @property
     def section(self) -> str:
@@ -101,8 +107,9 @@ FIELDS: List[Field] = [
     # ------------------------------------------------------------------ AI
     Field("ai.mode", "choice", "ask", "AI mode",
           "Ask: Claude proposes changes and you approve them. Assisted: Claude edits files and "
-          "runs builds and tests. Advanced: also git and approved workflows. Flashing, erasing "
-          "and installing always need your confirmation.",
+          "runs builds and tests; tests that run on this device (PlatformIO native, make test) "
+          "run code Claude wrote, as your user. Advanced: also git through mCode. Flashing, "
+          "erasing and installing always need your confirmation.",
           choices=tuple(AI_MODES), choice_labels=AI_MODES, lcd=True),
     Field("ai.claude_path", "path", "", "Claude Code program",
           "Empty: found automatically (PATH, ~/.local/bin/claude)."),
@@ -111,13 +118,18 @@ FIELDS: List[Field] = [
           "Off: mCode shows what it heard and waits for you to send it.", lcd=True),
     Field("ai.turn_timeout_s", "int", 1200, "AI task time limit (seconds)", minimum=60,
           maximum=14400),
+    Field("ai.hold_build_scripts", "bool", True, "Hold Claude's build-script changes",
+          "On: changes Claude makes to CMakeLists.txt, Makefiles, *.cmake, *.mk and Python or "
+          "shell scripts wait for your OK, and Claude cannot build until you decide. These files "
+          "run programs on this device when the project is built. Off: they apply like other "
+          "source files (Assisted and Advanced modes).", admin=True),
     Field("ai.allow_web", "bool", False, "Let Claude search the web (Advanced mode)",
-          "Datasheets and library documentation; read-only."),
+          "Datasheets and library documentation; read-only.", admin=True),
     Field("ai.login_code_page", "bool", True, "Paste the sign-in code from a phone",
           "While signing in to Claude waits for its code, mCode serves one page on the local "
           "network (second QR code) where a phone can paste it: one-time link, one code, "
           "closed when the sign-in stops waiting. Off: type the code on a keyboard or paste it "
-          "in the desktop IDE.", lcd=True),
+          "in the desktop IDE.", lcd=True, admin=True),
     # ---------------------------------------------------------- development
     Field("dev.projects_dir", "path", "~/mcode-projects", "Project folder",
           "Where new projects are created. Projects are never deleted with the app."),
@@ -146,7 +158,10 @@ FIELDS: List[Field] = [
           choices=UPLOAD_SPEEDS),
     Field("hw.verify_upload", "bool", True, "Verify after upload (where supported)"),
     # ------------------------------------------------------------- interface
-    Field("ui.theme", "choice", "dark", "Theme", choices=("dark", "light")),
+    Field("ui.theme", "choice", "dark", "Theme",
+          "Automatic follows the browser's or the phone's light/dark setting.",
+          choices=("dark", "light", "auto"),
+          choice_labels={"dark": "Dark", "light": "Light", "auto": "Automatic"}),
     Field("ui.font_size", "int", 14, "Editor font size", minimum=9, maximum=28),
     Field("ui.layout", "choice", "ai-right", "Editor layout",
           choices=("ai-right", "ai-left", "ai-bottom"),
@@ -157,15 +172,32 @@ FIELDS: List[Field] = [
     Field("ui.display_mode", "choice", "auto", "Display mode",
           "Auto: the LCD under mFruit OS, the desktop IDE elsewhere.",
           choices=("auto", "lcd", "desktop"),
-          choice_labels={"auto": "Automatic", "lcd": "LCD only", "desktop": "Desktop only"}),
+          choice_labels={"auto": "Automatic", "lcd": "LCD only", "desktop": "Desktop only"},
+          admin=True),
     Field("ui.desktop_ide", "bool", True, "Desktop IDE",
-          "Serve the full IDE to a browser on this device.", lcd=True),
+          "Serve the full IDE to a browser on this device.", lcd=True, admin=True),
     Field("ui.open_browser", "bool", True, "Open the IDE on the HDMI desktop",
-          "When a desktop session is running on this device."),
-    Field("web.port", "int", 8765, "Desktop IDE port", minimum=1024, maximum=65535),
+          "When a desktop session is running on this device.", admin=True),
+    Field("web.port", "int", 8765, "Desktop IDE port", minimum=1024, maximum=65535, admin=True),
     Field("web.lan", "bool", False, "Allow computers on the network",
-          "Off: only this device's own browser. On: any computer that has the pairing link "
-          "shown on the LCD.", lcd=True),
+          "Off: only this device's own browser. On: computers and phones on the network can "
+          "pair while a pairing screen is open (LCD: Desktop IDE › Pair a computer).", lcd=True,
+          admin=True),
+    Field("web.pair_role", "choice", "developer", "Access for new pairings",
+          "What a newly paired browser may do. Developer: projects, builds, flashing (with "
+          "confirmation) and the AI. Full access: also the terminal, folders outside the "
+          "project folder, tools and device settings. The LCD's pairing screen can switch it "
+          "for one pairing.",
+          choices=("viewer", "developer", "admin"),
+          choice_labels={"viewer": "Viewer (look only)", "developer": "Developer",
+                         "admin": "Full access"}, admin=True),
+    Field("web.session_days", "int", 30, "Keep paired browsers (days)",
+          "A browser not used for this many days must pair again.", minimum=1, maximum=365,
+          admin=True),
+    Field("web.extra_hosts", "str", "", "Other names of this device",
+          "Comma-separated host names a browser may use for mCode, e.g. the name of an HTTPS "
+          "tunnel or reverse proxy (mydevice.tailnet.ts.net). Requests for any other name are "
+          "refused (DNS rebinding).", admin=True),
     # ----------------------------------------------------------------- voice
     Field("voice.stt", "choice", "auto", "Speech recognition",
           "Auto: OpenAI when a key is set, else your command, else off.",
@@ -173,7 +205,8 @@ FIELDS: List[Field] = [
           choice_labels={"auto": "Automatic", "openai": "OpenAI", "command": "Local command",
                          "off": "Off"}),
     Field("voice.stt_command", "str", "", "Speech command",
-          "A local recogniser: {wav} is replaced by the recording; it prints the text."),
+          "A local recogniser: {wav} is replaced by the recording; it prints the text.",
+          admin=True),
     Field("voice.stt_model", "str", "gpt-4o-mini-transcribe", "OpenAI speech model"),
     Field("voice.language", "str", "en", "Speech language", "ISO code, e.g. en, de, th."),
     Field("voice.feedback", "choice", "spoken", "Sound feedback",
@@ -183,8 +216,10 @@ FIELDS: List[Field] = [
           choices=("auto", "openai", "espeak", "off"),
           choice_labels={"auto": "Automatic", "openai": "OpenAI", "espeak": "eSpeak",
                          "off": "Off"}),
-    Field("voice.capture_device", "str", "auto", "Microphone", "auto or an ALSA device name."),
-    Field("voice.playback_device", "str", "auto", "Speaker", "auto or an ALSA device name."),
+    Field("voice.capture_device", "str", "auto", "Microphone", "auto or an ALSA device name.",
+          admin=True),
+    Field("voice.playback_device", "str", "auto", "Speaker", "auto or an ALSA device name.",
+          admin=True),
     # --------------------------------------------------------------- storage
     Field("storage.backups_keep", "int", 10, "Backups kept per project", minimum=1, maximum=200),
     Field("storage.log_days", "int", 30, "Keep logs (days)", minimum=1, maximum=3650),
@@ -279,7 +314,8 @@ class Settings:
                         "section": SECTIONS.get(spec.section, spec.section),
                         "choices": list(spec.choices), "choice_labels": dict(spec.choice_labels),
                         "min": spec.minimum, "max": spec.maximum, "default": spec.default,
-                        "value": values[spec.key], "shown": spec.label_of(values[spec.key])})
+                        "value": values[spec.key], "shown": spec.label_of(values[spec.key]),
+                        "admin": spec.needs_admin})
         return out
 
     def cycle(self, key: str, step: int = 1) -> Any:

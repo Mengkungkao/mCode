@@ -3,8 +3,8 @@
 An AI embedded development studio for **mFruit OS**: talk to Claude about
 firmware, let it write and fix ESP32 and Arduino code in a real project, build
 it with the real toolchains, and flash it to your board, from the Whisplay
-screen with one button and your voice, or from a full IDE on an HDMI desktop
-or a laptop.
+screen with one button and your voice, from a full IDE on an HDMI desktop or
+a laptop, or from an iPhone.
 
 ```text
 Press and hold → “Create an ESP32 project for eight servos with a PCA9685”
@@ -26,6 +26,8 @@ library otherwise.
 | **Serial monitor** | Baud 300–2 000 000, ASCII/hex, timestamps, pause, search, save, send, board reset; it steps aside during uploads. |
 | **Voice** | Hold to talk on the Whisplay microphone, spoken or tone feedback on its speaker (speech service of your choice; typing always works). |
 | **Desktop IDE** | A browser IDE (CodeMirror editor, explorer, AI panel with diffs, build output, problems, terminal, serial monitor, hardware, libraries, git, settings), served by mCode itself. |
+| **iPhone and tablets** | The same IDE with a phone layout (tab bar, full-screen editor and AI chat, build view, serial monitor, bottom sheets) and a tablet layout; Add to Home Screen. Pair a phone by scanning the LCD's QR code. |
+| **Security** | One session per paired browser with Viewer, Developer or Full access; single-use links and pairing codes; sign browsers out one by one; the terminal and device settings need full access. |
 
 ## Quick start
 
@@ -47,6 +49,7 @@ On a Linux computer: `./run.sh --desktop` opens the IDE in your browser.
 ./run.sh cli --help           # the command line (projects, build, upload, monitor, ai)
 ./run.sh --preview DIR        # every LCD screen as PNG
 bash tools/check.sh           # everything CI runs
+python3 tools/benchmark.py    # start-up, memory, CPU, latency, page weight
 ```
 
 ## Documentation
@@ -58,13 +61,17 @@ bash tools/check.sh           # everything CI runs
 | Claude Code | [Claude Code in mCode](docs/CLAUDE_CODE.md) |
 | Settings | [Configuration](docs/CONFIGURATION.md) |
 | Safety | [Security](docs/SECURITY.md) |
-| Developers | [Architecture](docs/ARCHITECTURE.md) · [mFruit OS integration](docs/MFRUIT_OS.md) · [Testing](docs/TESTING.md) · [Implementation report](docs/IMPLEMENTATION_REPORT.md) · [Hand-off](CONTINUE.md) |
+| Phones and tablets | [iPhone and mobile](docs/IOS_MOBILE.md) |
+| Developers | [Architecture](docs/ARCHITECTURE.md) · [mFruit OS integration](docs/MFRUIT_OS.md) · [Testing](docs/TESTING.md) · [Performance](docs/PERFORMANCE_BENCHMARK.md) · [Release checklist](docs/RELEASE_CHECKLIST.md) · [Implementation report](docs/IMPLEMENTATION_REPORT.md) · [Hand-off](CONTINUE.md) |
+| 2.0 work | [Audit](docs/AUDIT_2.0.md) · [Roadmap](docs/ROADMAP_2.0.md) · [Security audit](docs/SECURITY_AUDIT_2.0.md) |
 
 ## Status
 
-Version 0.1.8. What has been verified, and how, is in [CONTINUE.md](CONTINUE.md)
-and the dated records in [docs/records/](docs/records/). Flashing a physical
-board and the Whisplay HAT itself have **not** been verified yet.
+Version 0.2.0. What has been verified, and how, is in [CONTINUE.md](CONTINUE.md)
+and the dated records in [docs/records/](docs/records/). An ESP32-C5 flash
+write was verified by esptool on an Orange Pi Zero 2W (0.1.1); the Whisplay
+LCD itself, the other boards and a real iPhone have **not** been verified
+yet.
 
 Claude Code is Anthropic's product; mCode uses your own installation and
 login and never handles your password or tokens.

@@ -39,7 +39,13 @@ login, boards, audio and permissions. mCode's log under mFruit OS is
 | **"No permission to open the port"** | `sudo usermod -aG dialout $USER`, then log in again. |
 | **"is open in minicom (1234)"** | Close the other program first. |
 | **Serial monitor shows nothing** | Wrong baud rate (the project's is in its info; ESP32 boot messages are 115200, the ROM uses 74880). ESP32-S3/C3/C5/C6 on their own USB port print only with *USB CDC on boot* (project settings). |
-| **Desktop IDE: "Sign in again"** | Open the link mCode printed, or pair again (LCD › Settings › Desktop IDE). *New pairing code* signs every browser out. |
+| **Desktop IDE: "This browser is not paired (or was signed out)"** | Pair again: LCD › Settings › Desktop IDE › *Pair a computer*. The link `run.sh --desktop` prints works once; run it again for a new one. |
+| **Pairing: "Pairing is closed"** | The code only works while the pairing screen is open on the LCD (or the Security page of a full-access browser shows one). Open it, then type the code it shows now. |
+| **Pairing: "That link or QR code was already used or has expired"** | Each QR code and link works once; the LCD shows a new one right after a pairing. Scan the current one. |
+| **"This browser has Developer access; this needs full access"** | Terminal, folders outside the project folder, tools and device settings need full access: pair again with *Full access* (3× on the LCD's pairing screen), or raise it from a full-access browser's Security page. |
 | **Desktop IDE not reachable from a laptop** | LCD › Settings › Desktop IDE › *Use from a computer* must be on; same network; the address shown there. |
+| **Phone shows the old state after waking up** | 0.2.0 reloads by itself when the connection comes back; pull the page down or reopen it otherwise. |
+| **AI: "mCode did not run build: these changes need the user's approval first"** | Claude changed a partition table, a dependency list or a build script. Review the held change (Keep / Put back), then build. Settings › *Hold Claude's build-script changes* switches the build-script part off. |
+| **Import a zip file did nothing / "Invalid JSON"** (0.1.x) | Zip import never worked before 0.2.0. Update. |
 | **"File changed on disk"** | A build, Claude or another editor changed it: load the disk version or keep yours. |
 | **Something broke after an AI change** | AI menu › *Undo Claude's last change*, or the IDE's project menu › Backups › Restore. |

@@ -401,12 +401,65 @@ def scenes(studio, ui) -> List[Tuple[str, Callable[[], None]]]:
     add("34-serial-connect", serial_idle)
     add("35-settings", lambda: (reset(), push(s.SettingsScreen(ui))))
     add("36-tools", lambda: (reset(), push(s.ToolsScreen(ui))))
-    add("37-desktop", lambda: (reset(), push(s.DesktopScreen(ui))))
+    def desktop_on():
+        reset()
+        studio.settings.set("web.lan", True, save=False)
+        studio.web = PreviewWeb(studio)
+        push(s.DesktopScreen(ui))
+    add("37-desktop", desktop_on)
+
+    def pair():
+        desktop_on()
+        screen = s.PairScreen(ui)
+        push(screen)
+        studio.web.open_pairing(screen.role)
+    add("37b-pair", pair)
+
+    def paired():
+        pair()
+        studio.web.sessions.window.paired.append("iPhone · Safari")
+    add("37c-paired", paired)
     add("38-confirm-stop", lambda: (reset(), push(s.ConfirmScreen(
         ui, "AI Engineer", "Stop Claude?", "Changes made so far can be reviewed or undone.",
         "Stop", lambda: None, danger=True, cancel="Keep working"))))
     add("39-about", lambda: (reset(), push(s.ReaderScreen(ui, "About", s.about_text(studio)))))
     return out
+
+
+class PreviewWeb:
+    """The parts of web.server.WebServer the LCD uses, without opening a port."""
+
+    running = True
+    port = 8765
+
+    def __init__(self, studio):
+        from .web.sessions import SessionStore
+        self.studio = studio
+        self.sessions = SessionStore(os.path.join(studio.paths.data, "preview-sessions.json"),
+                                     days=lambda: 30)
+        if not self.sessions.list():
+            self.sessions.create("admin", "Mozilla/5.0 (X11; Linux aarch64) Chrome/140")
+
+    def urls(self, with_token: bool = False, lan_only: bool = False) -> List[str]:
+        return ["http://192.168.0.130:8765/"] + ([] if lan_only else ["http://127.0.0.1:8765/"])
+
+    def pair_url(self) -> str:
+        window = self.sessions.pairing()
+        return f"http://192.168.0.130:8765/?p={window.qr_token}" if window else ""
+
+    def open_pairing(self, role=None):
+        window = self.sessions.open_pairing(role or "developer")
+        window.code = "482 913".replace(" ", "")
+        return window
+
+    def close_pairing(self) -> None:
+        self.sessions.close_pairing()
+
+    def desktop_available(self) -> bool:
+        return False
+
+    def rotate_token(self) -> None:
+        self.sessions.revoke_all()
 
 
 def render_all(directory: str, base: str = "") -> List[str]:

@@ -1,5 +1,69 @@
 # Changelog
 
+## [0.2.0] — 2026-11-28
+
+First step of the "mCode Studio 2.0" work: an audit, the fixes it found, a
+phone and tablet interface, and per-browser security. Details:
+[audit](docs/AUDIT_2.0.md), [roadmap](docs/ROADMAP_2.0.md).
+
+- **iPhone and tablets.** The IDE has a phone layout (bottom tab bar: Home,
+  Projects, AI Engineer, Devices, Settings; full-screen editor with code
+  keys above the keyboard; chat-style AI Engineer; build view; mobile serial
+  monitor; bottom sheets), a tablet layout and the desktop layout, all from
+  the same page. iOS design conventions (system font and colours, grouped
+  lists, 44 px targets, safe areas, keyboard-aware height, no zoom on focus),
+  Dark / Light / Automatic theme, *Add to Home Screen* with its own icon.
+  [iPhone and mobile](docs/IOS_MOBILE.md).
+- **Paired browsers, one by one.** Each browser now has its own session
+  (only a hash is stored), with an access level: Viewer, Developer (default
+  for new pairings) or Full access (terminal, folders outside the project
+  folder, tools, device and security settings). Pairing works only while
+  the LCD's *Pair a computer* screen (or a full-access browser's Security
+  page) is open, with a single-use QR code and 6-digit code. The link that
+  opens the IDE on the device works once. Settings › Security lists browsers,
+  signs one or all others out and shows security events; the LCD's *Sign out
+  all computers* signs out every browser. Browsers paired with 0.1.x keep
+  full access and are moved to a session on their next visit.
+- **Safer AI.** mCode's build, test, check and clean tools refuse to run for
+  Claude while its own risky edits (partition table, dependencies, build
+  scripts, git settings) wait for your decision; build scripts
+  (`CMakeLists.txt`, Makefiles, `*.cmake`, `*.mk`, Python and shell scripts)
+  are held by default (*Hold Claude's build-script changes*); `.git`
+  settings Claude changed are put back. Advanced mode no longer has a shell:
+  git goes through mCode's tools. Stopping a request also stops the build it
+  started.
+- **Safer flashing.** A build and an upload of the same project never run
+  at the same time, and the firmware's SHA-256 is checked again right before
+  writing: a rebuild after you confirmed is refused instead of flashed.
+- Fix: opening or diffing a project ran programs named in its own
+  `.git/config` (file-system monitor, filter and diff drivers).
+- Fix: importing a zip file never worked ("Invalid JSON."); imports are now
+  streamed and a leftover from an interrupted import no longer blocks them.
+- Fix: serial lines received while the monitor was paused never reached the
+  browser; a failed port hand-over could leave the monitor suspended.
+- Fix: every finished job stayed in memory with its output.
+- Fix: idle connections and event streams of phones that slept stayed open,
+  until "Too many open windows"; the page now reloads its state when the
+  connection comes back.
+- Faster pages: static files compressed and cached (first load 242 KB instead
+  of 1.3 MB on every visit); the terminal library loads when needed; build
+  output drawn once per frame.
+- AI Engineer: suggested actions (Create firmware, Explain code, Fix build
+  errors, Improve performance, Review security, Wiring doc, Explain serial
+  output), the mode's permissions shown above the text box, *Try again*.
+- New settings: `ai.hold_build_scripts`, `web.pair_role`,
+  `web.session_days`, `web.extra_hosts` (HTTPS tunnel or proxy names);
+  `ui.theme` gains `auto`. Settings that name programs or open the device to
+  the network need full access.
+- `tools/benchmark.py` measures start-up, memory, CPU, latency and page
+  weight; [results](docs/PERFORMANCE_BENCHMARK.md).
+- Tests: 178 → 211, each fix with a regression test that failed without it.
+- NOT VERIFIED: anything on an iPhone, Android phone or iPad (checked in
+  headless Chromium only); the new LCD pairing screen on a real Whisplay
+  display; pairing a real phone; flashing a board; a real Claude request with
+  the new Advanced-mode git tools; HTTPS through a tunnel; upgrading a board
+  that has browsers paired with 0.1.x.
+
 ## [0.1.8] — 2026-11-27
 
 - Fix: the AI Engineer could fail every request with "Not finished ·

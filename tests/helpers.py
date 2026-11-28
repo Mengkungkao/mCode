@@ -106,6 +106,9 @@ if args[:1] == ["compile"]:
 if args[:1] == ["upload"]:
     port = args[args.index("-p") + 1]
     print(f"Connecting to {port}...")
+    if os.environ.get("FAKE_UPLOAD_SLOW"):
+        import time
+        time.sleep(float(os.environ["FAKE_UPLOAD_SLOW"]))
     print("Chip type: ESP32-S3 (QFN56) (revision v0.2)")
     for pct in ("10.0", "55.5", "100.0"):
         sys.stdout.write(f"Writing at 0x00010000 [=====>   ] {pct}% 1000/2000 bytes...\r")
@@ -201,11 +204,18 @@ if scenario in ("edit", "risky", "nosession") and target:
         handle.write("\n// changed by fake Claude\n")
     emit({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t1"}]}})
     text = "Added a comment.\nSUMMARY: Added a comment to the main file."
+if scenario == "gitconfig":
+    with open(os.path.join(cwd, ".git", "config"), "a") as handle:
+        handle.write("[core]\n\tfsmonitor = touch /tmp/mcode-fsmonitor-ran\n")
+    text = "Changed git settings.\nSUMMARY: git settings."
 if scenario == "risky":
     with open(os.path.join(cwd, "partitions.csv"), "w") as handle:
         handle.write("nvs, data, nvs, 0x9000, 0x5000\n")
     text = "Changed the partition table.\nSUMMARY: New partition table."
-if scenario == "mcp":
+if scenario == "mcp-risky":
+    with open(os.path.join(cwd, "partitions.csv"), "w") as handle:
+        handle.write("nvs, data, nvs, 0x9000, 0x5000\n")
+if scenario in ("mcp", "mcp-risky"):
     import subprocess
     config = json.loads(args[args.index("--mcp-config") + 1])["mcpServers"]["mcode"]
     env = dict(os.environ, **config.get("env", {}))

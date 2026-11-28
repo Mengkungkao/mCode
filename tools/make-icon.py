@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Generate assets/icon.png (128x128): a chip with a spark on a rounded tile.
+"""Generate assets/icon.png (128x128): a chip with a spark on a rounded tile,
+and the web app's home-screen icons (app/web/static/icon-180.png, -512.png;
+square, because iOS and Android round them themselves).
 
 Drawn with Pillow only, so the icon carries no third-party licence. Run
 again after changing it.
@@ -15,7 +17,7 @@ from PIL import Image, ImageDraw
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def make(size: int = 128) -> Image.Image:
+def make(size: int = 128, rounded: bool = True) -> Image.Image:
     big = size * 4
     tile = Image.new("RGB", (big, big))
     draw = ImageDraw.Draw(tile)
@@ -42,7 +44,8 @@ def make(size: int = 128) -> Image.Image:
     draw.polygon(points, fill=(52, 199, 110))
     # rounded tile mask
     mask = Image.new("L", (big, big), 0)
-    ImageDraw.Draw(mask).rounded_rectangle((0, 0, big - 1, big - 1), radius=big * 0.22, fill=255)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, big - 1, big - 1),
+                                           radius=big * 0.22 if rounded else 0, fill=255)
     out = Image.new("RGBA", (big, big))
     out.paste(tile, (0, 0), mask)
     return out.resize((size, size), Image.LANCZOS)
@@ -53,3 +56,7 @@ if __name__ == "__main__":
     os.makedirs(os.path.dirname(path), exist_ok=True)
     make().save(path)
     print(path)
+    for size in (180, 512):
+        web = os.path.join(ROOT, "app", "web", "static", f"icon-{size}.png")
+        make(size, rounded=False).convert("RGB").save(web, optimize=True)
+        print(web)

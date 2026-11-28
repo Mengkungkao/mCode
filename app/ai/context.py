@@ -31,8 +31,10 @@ that anything was tested on hardware, unless the user told you so.
 - If a library is needed, name it and its source (Arduino Library Manager, PlatformIO Registry \
 or ESP-IDF Component Registry) and tell the user to install it from Libraries. If you add it to \
 platformio.ini lib_deps or idf_component.yml, mCode will ask the user before keeping that.
-- Changes to partition tables, bootloader, flash or fuse settings are held for the user's \
-explicit approval. Only make them when the request needs them, and say why.
+- Changes to partition tables, bootloader, flash or fuse settings, build scripts (CMakeLists.txt, \
+Makefile, *.cmake, *.mk, Python or shell scripts) and git settings are held for the user's \
+explicit approval, and mCode's build tools refuse to run until the user decides. Only make them \
+when the request needs them, say why, and end your answer so the user can review them.
 - Pins and electrical facts: give the source (the board's documentation or a datasheet) or \
 mark them clearly as ASSUMPTION. Never invent voltage or current ratings. Note 3.3 V versus \
 5 V logic. Keep docs/WIRING.md (Signal | Board pin | Connected to | Voltage | Source) current \
@@ -50,8 +52,9 @@ MODE_NOTES = {
                 "mCode's tools (mcp__mcode__build, mcp__mcode__run_tests). The user can undo "
                 "your changes.",
     "advanced": "Mode: Advanced. You edit the project directly, may build, test and check with "
-                "mCode's tools, and may use git (status, diff, log, add, commit). The user can "
-                "undo your changes.",
+                "mCode's tools, and may use git through mCode's tools (mcp__mcode__git_status, "
+                "git_diff, git_log, git_show, git_commit); there is no shell. The user can undo "
+                "your changes.",
 }
 
 KINDS = {

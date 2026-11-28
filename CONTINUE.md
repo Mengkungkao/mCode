@@ -5,13 +5,73 @@ embedded development studio, in `/home/meng/mCode` as an mFruit OS app (id
 `mcode`), Whisplay-first (second brief: "Whisplay HAT First UI/UX Redesign"),
 with a desktop IDE for HDMI. mFruit OS itself is not changed. The owner
 commits and pushes; commit bodies are dot points with **no co-author or agent
-lines**. Repository `github.com/Mengkungkao/mCode`; release v0.1.0 is
-published (tag at `3eaf245`). 0.1.1 is prepared in the working tree, not
-pushed (see "Session 2026-11-27 (later)").
+lines**. Repository `github.com/Mengkungkao/mCode`; releases up to v0.1.8 are
+published. 0.2.0 is in the working tree, not committed (see the 2026-11-28
+session below).
 
 Read first: [docs/IMPLEMENTATION_REPORT.md](docs/IMPLEMENTATION_REPORT.md)
 (inspection, decisions, plan), then [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 Evidence: [docs/records/2026-11-27-dev-machine.md](docs/records/2026-11-27-dev-machine.md).
+
+## Session 2026-11-28 (mCode Studio 2.0 directive → 0.2.0)
+
+Owner's brief: "MASTER DEVELOPMENT DIRECTIVE — mCode Studio 2.0" (audit, iOS
+UI, security, performance, docs). Plan and status: [Roadmap 2.0](docs/ROADMAP_2.0.md);
+findings: [Audit 2.0](docs/AUDIT_2.0.md); threat model:
+[Security audit 2.0](docs/SECURITY_AUDIT_2.0.md); evidence:
+[record](docs/records/2026-11-28-dev-machine-2.0.md). Boards .130/.248 did
+not answer SSH; no iPhone or USB board here: nothing below is hardware or
+iPhone verified. **Not committed** (the owner commits; manifest is 0.2.0, so
+pushing publishes v0.2.0).
+
+Done (each confirmed bug with a regression test and a negative control):
+- A-01 git never runs programs from a project's `.git/config` (fsmonitor,
+  filters, textconv, external diff, gpg): `gitutil._safety_args`.
+- A-03/A-04 builds and uploads of one project never overlap (job `locks`,
+  `project:<id>`); firmware SHA-256 recorded at confirmation and re-checked
+  right before writing.
+- A-05/A-06 AI build tools refuse while the turn's risky edits wait
+  (`Workspace.pending_reason`); build scripts and `.gitattributes` held
+  (`ai.hold_build_scripts`, default on); `.git` config/info/hooks restored
+  after a turn (turn `notices`); Advanced mode has no Bash, git through
+  mCode tools (`git_status/diff/log/show/commit`); ending a turn cancels its
+  builds.
+- A-07 job history bounded; A-09/A-10 serial monitor pause/resume.
+- A-02/A-16/A-17 per-browser sessions (`app/web/sessions.py`), single-use
+  links, pairing window (LCD *Pairing* screen, 3× = access level; Security
+  page in the IDE), roles viewer/developer/admin (`server.required_role`),
+  Origin check, plain 500 messages; 0.1.x cookies migrate once (admin).
+- A-08 idle time-out + TCP user time-out on event streams; A-12 the page
+  resyncs after reconnect/wake; A-13 bounded browser state, batched output;
+  A-15 gzip + ETag (the old `no-store` + `max-age` pair cached nothing);
+  xterm.js lazy.
+- A-11/A-18 zip import streamed; zip import had never worked before.
+- A-14 phone/tablet/desktop layouts (`app/web/static/mobile.js`, CSS),
+  iOS tokens, PWA manifest + icons (`tools/make-icon.py` makes them),
+  AI suggestions/mode note/retry, mobile editor keys, mobile serial monitor.
+- R-05 vendored JS checksums (`vendor/SHA256SUMS`) in `tools/check.sh`.
+- `tools/benchmark.py` + [report](docs/PERFORMANCE_BENCHMARK.md);
+  docs: IOS_MOBILE, RELEASE_CHECKLIST, SECURITY, CLAUDE_CODE, HARDWARE,
+  USER_GUIDE, TROUBLESHOOTING, TESTING, ARCHITECTURE, CONFIGURATION
+  (generated, new *Full* column), README, CHANGELOG.
+- Tests 178 → 211; `bash tools/check.sh` passes (11 checks).
+
+Next (owner / next session):
+1. Review and commit (suggested subject `feat: mCode Studio 0.2.0, iPhone
+   layout, paired-browser security, safer AI and flashing`), push → v0.2.0.
+2. On the .130: install 0.2.0, open *Pair a computer*, pair the iPhone by
+   QR; run the [phone checklist](docs/TESTING.md#phone-checklist-not-done-yet)
+   and `python3 tools/benchmark.py --idle 120`; record results.
+3. Flash an ESP32 (and an Uno if at hand) from the phone; check the job log
+   shows the SHA-256 line.
+4. Still PLANNED: archive a project, photo attachments for the AI, a sandbox
+   for host tests (bubblewrap), OS keyring for the OpenAI key, a service
+   worker once HTTPS through a tunnel is verified.
+
+Decision to confirm with the owner: the release is **0.2.0**, not 2.0.0, because
+the directive's acceptance criteria (iPhone, Whisplay, flashing evidence) are
+not met yet; renaming is a one-line change in `manifest.json` and
+`app/__init__.py`.
 
 ## Decisions taken (owner may revisit)
 
@@ -53,7 +113,10 @@ Statuses: NOT IMPLEMENTED · IMPLEMENTED · SOFTWARE TESTED · HARDWARE VERIFIED
 | Serial monitor | IMPLEMENTED | SOFTWARE TESTED (real PTYs: exclusivity, 74880 baud, hex, search, save, suspend/resume) | NOT VERIFIED |
 | Libraries | IMPLEMENTED | SOFTWARE TESTED (partly); real index use NOT VERIFIED | N/A |
 | Voice (microphone, speech, feedback) | IMPLEMENTED | SOFTWARE TESTED (fake arecord, fake speech server) | NOT VERIFIED |
-| Desktop IDE security (token, host, CSRF, pairing) | IMPLEMENTED | SOFTWARE TESTED | N/A |
+| Desktop IDE security (sessions, roles, single-use links, pairing window, host, origin, CSRF) | IMPLEMENTED (0.2.0) | SOFTWARE TESTED | LCD pairing screen NOT VERIFIED on a real display |
+| Phone and tablet layouts (iOS design, tab bar, sheets, keyboard-aware) | IMPLEMENTED (0.2.0) | headless Chromium (iPhone 13, tablet, desktop viewports) | real iPhone Safari NOT VERIFIED |
+| AI build-tool refusal, git tools, `.git` restore | IMPLEMENTED (0.2.0) | SOFTWARE TESTED (fake CLI, real MCP server) | N/A |
+| Firmware checksum re-check, build/upload lock | IMPLEMENTED (0.2.0) | SOFTWARE TESTED (fake uploader) | NOT VERIFIED |
 | Release package | IMPLEMENTED | built and checked locally (560 KB) | release workflow NOT RUN (no repo) |
 
 `bash tools/check.sh` = CI (suite, smoke test, mFruit OS preflight, SDK and

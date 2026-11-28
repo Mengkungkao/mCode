@@ -63,11 +63,11 @@ Every request runs `claude -p` with:
 | Option | Why |
 |---|---|
 | `--restricted` | no shell or code-running tools unless named, file tools confined to the working folder, your user/project Claude settings not loaded |
-| `--tools Read,Edit,Write,Glob,Grep` (+ `Bash` in Advanced) | the built-in tools of the mode |
+| `--tools Read,Edit,Write,Glob,Grep` | the built-in tools (no shell in any mode since 0.2.0) |
 | `--permission-mode acceptEdits` | edits inside the working folder need no prompt |
 | `--permission-prompts none` | anything else is refused, not waited for |
 | `--strict-mcp-config --mcp-config …` | only mCode's own tools (below) |
-| `--allowedTools …` | mCode's tools for the mode; in Advanced `Bash(git status/diff/log/add/commit/show:*)` only |
+| `--allowedTools …` | mCode's tools for the mode (and web search in Advanced when allowed) |
 | `--append-system-prompt …` | mCode's rules: stay in the project, never claim hardware tests, cite pin sources or mark assumptions, keep docs/WIRING.md current, end with a SUMMARY line |
 
 mCode's tools (an MCP server started for the request, talking to mCode over a
@@ -78,9 +78,21 @@ private socket):
 | `project_info`, `last_build`, `serial_log`, `list_devices` (read-only) | ✓ | ✓ | ✓ |
 | `build`, `run_tests` (host-side only) | | ✓ | ✓ |
 | `static_check`, `clean` | | | ✓ |
+| `git_status`, `git_diff`, `git_log`, `git_show`, `git_commit` | | | ✓ |
 
 There is **no tool to upload, erase, change fuses or install** anything.
 Those are mCode actions that need your confirmation on screen.
+
+Git in Advanced mode is mCode's own (`app/projects/gitutil.py`): it never
+runs programs named in the repository's configuration, and Claude's commits
+run without hooks. Before 0.2.0 Advanced mode used `Bash(git …)`, which
+honoured the repository's configuration.
+
+`build`, `run_tests`, `static_check` and `clean` refuse to run while the
+request has changes waiting for your decision (below) or has changed the
+project's git settings: Claude is told why and ends its answer, you review,
+then build. Stopping a request (or its time limit) also stops the build it
+started.
 
 ## Changes and approvals
 
@@ -91,10 +103,17 @@ Those are mCode actions that need your confirmation on screen.
 * **Assisted / Advanced**: before the request mCode snapshots and backs up
   the project; Claude edits in place; afterwards *Undo* puts the files back.
 * **Held in every mode**: partition tables, `sdkconfig*`, bootloader and
-  linker files, `platformio.ini` flash/bootloader/fuse/upload settings, and
-  dependency lists (`lib_deps`, `platform_packages`, `idf_component.yml`,
-  `library.json`, `sketch.yaml`). In Assisted/Advanced mode they are moved
-  out of the project until you *Keep* them.
+  linker files, `platformio.ini` flash/bootloader/fuse/upload/extra-script
+  settings, dependency lists (`lib_deps`, `platform_packages`,
+  `idf_component.yml`, `library.json`, `sketch.yaml`), git attributes and
+  submodules, and (while Settings › *Hold Claude's build-script changes* is
+  on, the default) build scripts that run on this device when the project is
+  built: `CMakeLists.txt`, `*.cmake`, Makefiles, `*.mk`, Python and shell
+  scripts. In Assisted/Advanced mode they are moved out of the project until
+  you *Keep* them.
+* **Git settings**: in Assisted/Advanced mode `.git/config`, `.git/info` and
+  `.git/hooks` are put back after the request if Claude changed them; the
+  answer says so.
 * After a *Fix the build* request is approved, mCode rebuilds.
 
 ## Context Claude gets

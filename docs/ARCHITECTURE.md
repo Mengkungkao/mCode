@@ -14,8 +14,9 @@ run.sh → app/main.py
   │    voice/     devices · audio (push-to-talk, player) · speech (STT/TTS) · service
   ├─ lcd/   the Whisplay interface: ui.py (input, navigation, drawing), screens.py, draw.py, qr.py,
   │         whisplay.py (the only whisplay-daemon client besides the SDK)
-  ├─ web/   the desktop IDE: server.py (HTTP + SSE API, access control), terminal.py, desktop.py,
-  │         static/ (index.html, app.js, app.css, vendored CodeMirror and xterm.js)
+  ├─ web/   the desktop IDE: server.py (HTTP + SSE API, access control, roles), sessions.py
+  │         (browser sessions, single-use links, pairing), terminal.py, desktop.py, codedrop.py,
+  │         static/ (index.html, app.js, mobile.js, app.css, vendored CodeMirror and xterm.js)
   └─ cli.py the command line
 ```
 
@@ -24,7 +25,7 @@ run.sh → app/main.py
 | Responsibility | Owner | Notes |
 |---|---|---|
 | Settings and their validation | `core/config.py` | one schema (`FIELDS`); docs/CONFIGURATION.md is generated from it |
-| Long operations (build, upload, install, AI turn) | `core/jobs.py` `JobManager` | lanes: one build, one upload, one install, one AI turn, two tool jobs; resources (ports) never overlap; cancel kills the process group; time limits |
+| Long operations (build, upload, install, AI turn) | `core/jobs.py` `JobManager` | lanes: one build, one upload, one install, one AI turn, two tool jobs; resources (ports, `project:<id>` locks) never overlap, so a build waits for its project's upload; cancel kills the process group; time limits; bounded history |
 | Projects: create, open, rename, duplicate, delete, import, recent, current | `projects/manager.py` | metadata in each project's `.mcode/project.json` |
 | File access inside a project | `projects/files.py` | the project is a hard boundary (`resolve`) |
 | Which boards exist | `projects/boards.py` | only tool-defined IDs |
@@ -35,8 +36,11 @@ run.sh → app/main.py
 | Who uses a port | `hardware/ports.py` | monitor, uploads and chip detection acquire it |
 | Writing to boards | `hardware/upload.py` | prepare → confirm token → start; no other code path |
 | Talking to Claude | `ai/claude.py` | the only place the CLI is run |
+| Who may use the desktop IDE | `web/sessions.py` | sessions, roles, links, pairing window, security log |
+| What each API call needs | `web/server.py` `required_role` | one table |
+| Git commands | `projects/gitutil.py` | neutralises programs named in a repository's configuration |
 | AI requests, reviews, undo, action log | `ai/service.py` | one request at a time |
-| Claude's tools | `ai/bridge.py` | per-request token, per-mode tool set |
+| Claude's tools | `ai/bridge.py` | per-request token, per-mode tool set, refusal while held edits wait, the turn's jobs cancelled when it ends |
 | Microphone, speaker, speech | `voice/` | push-to-talk only while the AI screen is open |
 | LCD and button | `lcd/` | through the mFruit SDK and whisplay-daemon |
 
@@ -63,6 +67,9 @@ button hold ─ whisplay-daemon ─ lcd/whisplay.py ─ SDK InputController ─ 
   as Server-Sent Events through a bounded queue per browser.
 * The LCD draws on one render thread, only when something changed or while a
   screen animates (4 fps), and only while mCode has the screen.
+* The browser side is one page with three layouts (phone, tablet, desktop;
+  [iPhone and mobile](IOS_MOBILE.md)); `mobile.js` arranges the same views
+  and calls the same API as `app.js`.
 * USB hot-plug, the serial monitor reader, the microphone reader, the AI tool
   bridge and the desktop server each have one thread.
 
